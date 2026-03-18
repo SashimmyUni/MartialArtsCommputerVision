@@ -1,0 +1,1886 @@
+﻿% IMPORTANT! In order for the document to compile, one needs to use XeLaTeX or LuaLaTeX as compiler. This can be done in  Overleaf by Menu -> Settings -> Compiler -> Choose XeLaTeX/LuaLaTeX
+\documentclass[12pt]{article}
+
+\usepackage{KUstyle}
+\usepackage[margin=0.8in]{geometry}
+\usepackage{setspace}
+\usepackage{tabularx}
+\usepackage{fontspec}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{caption}
+\usepackage{subcaption}
+
+\setmainfont{Arial}
+
+% Frontpage content
+\ptype{Bachelor's thesis}
+\author{Jimmy Huynh}
+\title{Reference-Based Martial Arts Trainer: \\ Pose Comparison and Feedback System}
+\subtitle{A Template-Matching Approach for Technique Assessment}
+\date{Date: {March 2026}}
+\advisor{Advisor: {Barry Brown}}
+\fpimage{picture.png}
+
+\renewcommand{\contentsname}{Table of Contents}
+
+\begin{document}
+
+\maketitle
+
+\onehalfspacing
+
+\begin{table}[h]
+\def\arraystretch{1.5}
+\begin{tabularx}{\textwidth}{l X}
+Institute: & {Copenhagen University}  \\
+Department: & {Department of Computer Science, DIKU} \\
+Author(s): & {Jimmy Huynh} \\
+Title and subtitle: & {Reference-Based Martial Arts Trainer: Pose Comparison and Feedback System} \\
+Description: & This thesis presents the design and evaluation of a martial arts coaching system based on pose estimation and template matching. The system compares user motion to canonical references and provides real-time feedback. \\
+Advisor: & {Barry Brown} \\
+Date: & {March 2026}
+\end{tabularx}
+\end{table}
+\newpage
+
+\tableofcontents
+\newpage
+
+{\fontfamily{ptm}\selectfont
+
+\section{Introduction}
+\subsection{Background and Motivation}
+Martial arts training is traditionally guided by expert instructors who provide real-time feedback on technique, form, and performance. However, access to such supervision is often limited outside formal classes, making it challenging for practitioners to improve independently. With the rapid advancement of computer vision and artificial intelligence, there is growing interest in developing automated systems that can assist in skill acquisition and refinement.
+
+Recent research, such as Quinn and Corcoran's work on video-based martial arts action recognition using deep learning \cite{martialartsDL2023}, has shown that machine learning models can accurately classify combat actions and detect positions in video footage. These systems leverage large datasets and sophisticated algorithms to achieve high accuracy, but often require significant annotation effort and computational resources.
+
+Motivated by the need for accessible, interpretable, and extensible coaching tools, this project explores a reference-based approach to martial arts training. By comparing user motion to canonical reference sequences and providing real-time feedback, the system aims to bridge the gap between expert supervision and self-guided practice. The focus is on template matching and pose normalization, enabling robust assessment without the need for extensive labeled data or deep learning expertise
+
+
+
+\subsection{Problem Statement}
+Despite the availability of pose estimation technologies and action recognition models, most martial arts practitioners lack access to personalized, actionable feedback outside of supervised training environments. Existing automated systems either rely on generic movement analysis or require large, labeled datasets for supervised learning, which limits their accessibility and adaptability.
+
+The core problem addressed in this thesis is the development of a system that can robustly compare a user's martial arts technique to canonical reference sequences and provide real-time, technique-specific feedback. The solution must operate without extensive data annotation, be interpretable for both users and instructors, and support a range of striking techniques and camera angles.
+
+This project seeks to bridge the gap between expert-driven coaching and self-guided practice by leveraging template matching and pose normalization, enabling reliable assessment and correction in a scalable, extensible framework.
+
+ 
+
+\subsection{Objectives}
+The primary objectives of this thesis are:
+
+\begin{itemize}
+\item \textbf{Design and implement} a reference-based martial arts trainer that leverages pose estimation and template matching to assess user performance.
+\item \textbf{Develop a robust pipeline} for capturing, organizing, and validating reference sequences for multiple techniques and angles.
+\item \textbf{Establish pose normalization and comparison metrics} that enable reliable, interpretable scoring across diverse users and recording conditions.
+\item \textbf{Create a feedback system} that delivers real-time, actionable advice and visual correction cues to users.
+\item \textbf{Evaluate the system} through quantitative and qualitative experiments, comparing its performance and user experience to existing deep learning-based approaches.
+\end{itemize}
+
+These objectives aim to advance the accessibility and effectiveness of automated martial arts coaching, providing a foundation for future research and practical deployment.
+
+\subsection{Scope and Limitations}
+This thesis focuses on the development and evaluation of a reference-based martial arts trainer for a selected set of striking techniques, including jab, cross, hook, uppercut, front kick, side kick, roundhouse kick, and fighting stance. The system is designed to operate with 2D pose estimation and template matching, using a curated reference library and real-time feedback mechanisms.
+
+The scope is limited to pose-based assessment and correction, without incorporating full-body dynamics, force estimation, or advanced learning-based classification. The system relies on the accuracy of the pose detector and the quality of reference sequences, and is currently implemented for CPU-only inference, which may restrict throughput for large-scale experiments.
+
+Other limitations include:
+\begin{itemize}
+\item Dependence on the diversity and timing of reference examples.
+\item Sensitivity to occlusions, camera angles, and lighting conditions.
+\item Lack of supervised learning for generalization to unseen techniques or performers.
+\item No integration of audio or contextual cues beyond pose data.
+\end{itemize}
+
+Despite these constraints, the project demonstrates a practical, interpretable approach to automated martial arts coaching, laying the groundwork for future enhancements and broader applicability.
+
+\subsection{Structure of the Thesis}
+The thesis is organized to provide a clear and logical progression from motivation and problem definition to system design, evaluation, and discussion. The structure is as follows:
+
+\begin{itemize}
+\item \textbf{Section 2: Related Work}  --  Reviews prior research in pose estimation, martial arts coaching systems, and template matching versus learning-based approaches, highlighting gaps and informing the project's methodology.
+\item \textbf{Section 3: System Design and Methodology}  --  Details the architecture of the reference-based trainer, including data collection, pose normalization, scoring metrics, feedback generation, and software implementation.
+\item \textbf{Section 4: Experiments and Results}  --  Presents the experimental setup, reference quality analysis, trainer evaluation on test videos, quantitative results, and qualitative user feedback.
+\item \textbf{Section 5: Discussion}  --  Analyzes strengths, limitations, bottlenecks, and potential improvements, comparing the system to existing deep learning-based solutions.
+\item \textbf{Section 6: Conclusion and Future Work}  --  Summarizes the main contributions and outlines directions for further research and development.
+\item \textbf{Appendix}  --  Includes supplementary materials such as code listings, figures, command-line usage examples, and reference plan samples.
+\end{itemize}
+
+This structure ensures comprehensive coverage of the project's objectives, methods, findings, and implications, supporting both technical rigor and practical relevance.
+
+\section{Related Work}
+\subsection{Pose Estimation in Sports}
+Pose estimation has become a central component in modern sports analytics because it provides a structured representation of athlete movement through key body joints over time. Instead of relying only on RGB appearance, pose-based pipelines allow coaches and researchers to quantify technique, alignment, and temporal coordination in a more interpretable way. In practice, this enables movement quality assessment, error detection, and performance feedback across domains such as combat sports, athletics, and rehabilitation-oriented training.
+
+Early progress in the field was driven by robust multi-person 2D pose detectors such as OpenPose, which introduced part affinity fields for real-time joint association in unconstrained scenes \cite{cao2017realtime}. Subsequent methods improved localization accuracy and efficiency, including Simple Baselines for Human Pose Estimation \cite{xiao2018simple}, HRNet for high-resolution feature preservation \cite{sun2019hrnet}, and lightweight systems such as BlazePose for real-time deployment on edge devices \cite{bazarevsky2020blazepose}. Benchmark datasets and challenges, particularly PoseTrack, further standardized evaluation for multi-person pose estimation and tracking in video settings \cite{andriluka2018posetrack}.
+
+In sports contexts, pose estimation is typically used in two ways. First, it supports descriptive analytics by extracting kinematic features such as joint angles, limb trajectories, and symmetry measures. Second, it serves as the input to higher-level action analysis models, including sequence matching or graph-based recognition. For this project, pose estimation acts as the front-end sensing module, while downstream scoring is handled by reference-based comparison rather than end-to-end classification. This design choice prioritizes interpretability and practical feedback generation, which is especially important in coaching scenarios where users need to understand not only whether a movement is incorrect, but also how to correct it.
+
+Compared with purely deep learning classifiers, pose-driven template methods can operate with smaller labeled datasets and provide clearer biomechanical explanations at the joint level. However, they remain sensitive to detector quality, occlusions, and viewpoint variation. This trade-off is consistent with findings in recent martial arts action recognition literature, where high recognition performance is possible, but robustness and explainability depend strongly on representation choice and data quality \cite{martialartsDL2023,journalEQ2025}.
+
+\subsection{Martial Arts Coaching Systems}
+Automated martial arts coaching systems generally follow one of two paradigms: classification-first pipelines and feedback-first pipelines. Classification-first systems focus on identifying the performed action label, typically using deep spatiotemporal models on RGB or skeleton sequences. These approaches can achieve strong recognition performance, especially when trained on large curated datasets, and are well suited for tasks such as action categorization and performance benchmarking. However, they often provide limited interpretability at the joint level, which can reduce their usefulness for real-time skill correction in training contexts.
+
+In contrast, feedback-first systems are designed around corrective guidance rather than only class prediction. They commonly rely on keypoint extraction, handcrafted kinematic descriptors, or reference/template matching to produce actionable advice, such as which limb should be repositioned or which joint angle is incorrect. This direction is more aligned with practical coaching, where the user needs understandable correction cues instead of only a class score. The main challenge is robustness: feedback quality depends strongly on reference quality, viewpoint consistency, and stable pose detection under fast motion and occlusion.
+
+Recent martial arts literature highlights this trade-off. Deep learning studies in combat action recognition report strong end-to-end detection and classification potential, but still face data and generalization constraints when moving across performers, camera setups, and technique styles \cite{martialartsDL2023,journalEQ2025}. The present project positions itself between these extremes by using a pose-based reference framework that preserves interpretability while remaining computationally practical. Compared with fully supervised coaching models, this approach reduces annotation burden and makes per-technique customization easier; compared with simple rule-only systems, it improves temporal matching by combining sequence alignment and multi-metric scoring.
+
+Overall, existing work suggests that the most practical martial arts coaching systems are hybrid in spirit: they combine robust pose sensing, temporally aware comparison, and human-readable corrective outputs. This thesis follows that direction by prioritizing explainable, technique-specific feedback while maintaining extensibility for future learning-based upgrades.
+
+\subsection{Template Matching vs. Learning-Based Approaches}
+A core design decision in movement assessment systems is whether to use template matching or learning-based inference as the primary comparison engine. Both paradigms can be effective, but they optimize for different priorities.
+
+Template matching compares a user sequence directly to stored reference sequences using explicit similarity metrics. In pose-based settings, this often includes geometric alignment, temporal matching (e.g., DTW), and kinematic constraints (e.g., joint-angle consistency). The main advantage is interpretability: each score component can be traced to concrete motion differences, making feedback easier to explain and act upon. Template methods are also data-efficient, since they do not require large labeled datasets for initial deployment. This is especially useful in domain-specific projects, such as martial arts, where curated technique references may be easier to obtain than large annotated corpora.
+
+Learning-based approaches instead train models to infer technique classes, quality scores, or error types from examples. These methods can generalize better across performers and recording conditions when sufficient diverse data is available. They are often more robust to noise and intra-class variation, particularly with modern spatiotemporal architectures and skeleton-graph models. However, they introduce higher requirements for annotation, model selection, hyperparameter tuning, and compute resources. They can also be less transparent during failure analysis, because misclassifications are not always directly attributable to interpretable biomechanical factors.
+
+For coaching applications, this trade-off is practical rather than purely technical. If the goal is rapid prototyping, explainable scoring, and actionable correction cues, template matching is often preferable. If the goal is large-scale generalization across heterogeneous populations and unconstrained capture conditions, learning-based models may eventually outperform reference-driven systems. Prior combat-sport literature reflects this pattern: deep learning pipelines report strong recognition capability, while practical deployment still depends on data quality and interpretable feedback design \cite{martialartsDL2023,journalEQ2025}.
+
+This thesis adopts a template-first strategy because it aligns with project constraints and coaching objectives: limited labeled data, need for transparent score decomposition, and emphasis on immediate user guidance. At the same time, the system architecture is compatible with future hybridization, where learning-based modules can augment reference retrieval, threshold calibration, or error prediction while preserving interpretable feedback at the user interface level.
+
+\subsection{Summary of Gaps}
+The reviewed literature demonstrates strong progress in pose estimation and action recognition, but several gaps remain for practical martial arts coaching systems.
+
+First, many existing works prioritize action classification accuracy over corrective usability. A predicted class label alone is insufficient for training support, since practitioners also need interpretable guidance on \emph{what} is wrong and \emph{how} to adjust their posture. This creates a gap between recognition-oriented research and coaching-oriented deployment.
+
+Second, deep learning approaches often depend on large, well-annotated datasets that are difficult to build for technique-specific martial arts domains. Data collection at sufficient scale across styles, camera viewpoints, body types, and execution quality is costly and time-consuming. As a result, transferability to real-world home training scenarios is limited.
+
+Third, robustness and evaluation consistency remain open challenges. Performance can degrade under occlusion, viewpoint changes, fast limb motion, and inconsistent video quality. In addition, many studies do not report a unified protocol that links quantitative metrics with coaching relevance, making it difficult to compare systems from a practitioner perspective.
+
+Fourth, few systems provide a transparent score decomposition that combines spatial similarity, temporal alignment, and technique-specific kinematics in a way that is understandable to end users and supervisors. Without this transparency, diagnosing failure cases and improving references or thresholds becomes harder.
+
+These gaps motivate the approach of this thesis: a reference-based, pose-driven coaching pipeline that emphasizes interpretability, lower data dependency, and actionable feedback while maintaining a clear path for future hybridization with learning-based modules.
+
+\\section{System Design and Methodology}
+
+This section presents the end-to-end design of the reference-based martial arts trainer and the methodological decisions used to make it practical, interpretable, and reproducible. The system is built around pose estimation, reference-sequence matching, and real-time coaching feedback. Instead of only predicting action labels, the pipeline evaluates movement quality against curated technique references and provides correction-oriented outputs.
+
+\subsection{Data Collection and Reference Library}
+
+The reference library is the core knowledge source of the trainer. Since the system is template-based, reference quality directly affects score reliability, matched-angle selection, and feedback usefulness. For this reason, data collection was designed as a controlled and repeatable workflow rather than manual one-off capture.
+
+\subsubsection{Collection Strategy}
+
+References are organized along two dimensions:
+
+\begin{itemize}
+    \item \textbf{Technique} (e.g., jab, cross, hook, uppercut, front kick, side kick, roundhouse kick),
+    \item \textbf{View angle} (front, left45, right45, side).
+\end{itemize}
+
+For each technique-angle pair, multiple examples are targeted to capture natural variation in execution timing and posture while preserving technical consistency.
+
+\subsubsection{Plan-Driven Batch Collection}
+
+A CSV plan is used to manage collection jobs at scale. Each row defines one technique-angle target and includes candidate video sources. The batch runner processes rows marked as ready and attempts to save up to a specified number of references per angle.
+
+This plan-driven setup provides:
+
+\begin{itemize}
+    \item \textbf{Reproducibility}: identical plans can be rerun with the same settings.
+    \item \textbf{Coverage control}: missing technique-angle combinations are easy to identify.
+    \item \textbf{Operational efficiency}: long runs can execute unattended.
+\end{itemize}
+
+\subsubsection{Reference Acceptance Gates}
+
+Each candidate sequence must pass quality gates before being saved:
+
+\begin{itemize}
+    \item \textbf{Motion gate}: rejects near-static windows.
+    \item \textbf{Return-closure gate}: enforces extension and retraction structure.
+    \item \textbf{Optional score gate}: checks consistency against existing references after bootstrap.
+\end{itemize}
+
+These constraints reduce false references such as setup frames, partial motions, or detector artifacts.
+
+\subsubsection{Capture Modes}
+
+Two capture modes are used:
+
+\begin{itemize}
+    \item \textbf{first\_valid}: save the first candidate that passes all gates.
+    \item \textbf{best\_window}: evaluate multiple valid candidates and save the best one.
+\end{itemize}
+
+The first mode favors speed; the second favors quality and is preferred for final library curation.
+
+\subsubsection{Storage Layout and Naming}
+
+References are stored as pose sequences in a hierarchical directory structure:
+
+\begin{itemize}
+    \item \texttt{reference\_poses/<technique>/<angle>.npy}
+    \item optional indexed variants (e.g., \texttt{right45\_03.npy}) for additional examples
+\end{itemize}
+
+This format supports direct retrieval by technique and angle during runtime matching.
+
+\subsubsection{Quality Assurance Workflow}
+
+After collection, references are visualized and manually reviewed. Samples showing static motion, poor timing, or unstable keypoints are removed and recaptured with stricter gates if necessary. This review loop is essential because model scoring can appear numerically stable even when reference semantics are weak.
+
+\subsubsection{Methodological Rationale}
+
+Compared with large supervised datasets, this curated-library approach reduces annotation burden and preserves interpretability. The trade-off is that system performance depends strongly on reference quality and coverage. Consequently, reference curation is treated as an ongoing process, not a one-time preprocessing step.
+
+\subsubsection{Capture Quality Gates}
+
+To ensure that only meaningful and technically useful sequences enter the reference library, each candidate window must satisfy a set of quality gates during capture. These gates are designed to reject weak templates early, reducing downstream scoring noise and minimizing manual cleanup.
+
+\paragraph{Motion Energy Gate}
+The motion gate filters out near-static windows by enforcing a minimum displacement/energy criterion over the sequence. In practice, this removes clips where the subject is idle, transitioning slowly without clear execution, or where detector outputs remain almost constant due to tracking artifacts.
+
+\paragraph{Return-Closure Gate}
+A valid striking or kicking reference should represent a complete action cycle, not only a partial extension. The return-closure gate checks whether the motion exhibits a coherent extension followed by recovery. This prevents storing windows that capture only preparation or isolated peak frames.
+
+\paragraph{Score-Consistency Gate (Optional)}
+After initial references exist, a candidate can be compared against the current technique bank. Candidates with extremely poor consistency may be rejected as outliers. This gate helps control reference drift and preserves internal library coherence over iterative collection rounds.
+
+\paragraph{Why These Gates Matter}
+Without these constraints, the library can accumulate mistimed or semantically weak templates, causing false low scores and unstable angle matching during inference. The gates therefore act as a first line of quality assurance before manual review.
+
+\paragraph{Operational Trade-off}
+Stricter gates improve reference quality but reduce acceptance rate and increase collection time. In early bootstrapping, relaxed settings may be used to populate the library. In later refinement phases, stricter thresholds are preferred to improve coaching reliability.
+
+\subsection{Pose Normalization and Preprocessing}
+
+Robust comparison between user motion and reference templates requires a representation that is minimally affected by camera translation, subject scale, and inconsistent keypoint confidence. The preprocessing pipeline therefore transforms raw detector output into normalized, temporally aligned pose sequences before scoring.
+
+\subsubsection{Raw Input and Confidence Handling}
+
+Each frame consists of \(K\) body keypoints with image coordinates and confidence values. Joints below a confidence threshold are treated as unreliable and marked invalid. This prevents low-quality detections from introducing artificial geometric errors in distance- and angle-based metrics.
+
+\subsubsection{Body-Centered Translation}
+
+To remove absolute image-position dependency, each pose is translated to a body-centered coordinate system. The preferred anchor is the midpoint of the left and right hip joints. If these joints are missing, a fallback anchor is computed from available valid joints. This keeps comparison focused on relative body structure instead of location in the frame.
+
+\subsubsection{Scale Normalization}
+
+After translation, the pose is scaled by a body-size proxy to compensate for camera distance and body-proportion variation. Shoulder width is used as the primary scale estimate, with fallback strategies (e.g., hip width or median radial spread) when shoulders are unreliable. A minimum scale bound is enforced for numerical stability.
+
+\subsubsection{Sequence-Wise Normalization}
+
+The frame-level normalization is applied across the full sequence window, producing \((T, K, 2)\) normalized trajectories. Invalid joints remain explicitly undefined, allowing downstream metrics to ignore unsupported comparisons instead of relying on aggressive imputation.
+
+\subsubsection{Temporal Resampling}
+
+User and reference windows can differ in duration. To ensure fair comparison, both sequences are resampled to a common target length. This standardization improves compatibility between metric components and reduces sensitivity to FPS differences or minor speed variation.
+
+\subsubsection{Mirror Handling}
+
+Because many techniques can be executed on either side (left/right), a mirrored version of the user sequence is also evaluated. The orientation with better agreement to the reference is selected automatically. This avoids penalizing correct technique due solely to laterality mismatch.
+
+\subsubsection{Preprocessing Impact}
+
+These preprocessing steps improve robustness and interpretability simultaneously. In practical terms, score differences are more likely to represent true form/timing discrepancies rather than camera geometry artifacts. This increases stability in reference matching, threshold behavior, and feedback consistency during live coaching.
+
+\subsection{Scoring and Comparison Metrics}
+
+The scoring module compares a normalized user sequence against a normalized reference sequence and produces an interpretable metric bundle plus a fused final score. The design combines complementary criteria so that spatial form, temporal alignment, and technique-specific biomechanics are all represented in the decision.
+
+\subsubsection{Comparison Setup}
+
+Let \(U\) denote the user sequence and \(R\) the reference sequence after preprocessing. Both are resampled to a common temporal length. A mirrored variant \(U^{m}\) is also evaluated to handle left/right execution differences. The orientation with higher cosine agreement is selected for downstream metric computation.
+
+\[
+U^{*}=
+\begin{cases}
+U^{m}, & \text{if } \cos(U^{m},R) > \cos(U,R) \\
+U, & \text{otherwise}
+\end{cases}
+\]
+
+\subsubsection{Metric 1: Cosine Similarity}
+
+Cosine similarity measures global agreement of the flattened pose trajectories:
+
+\[
+\text{cos\_sim}=\frac{\langle \mathbf{u},\mathbf{r}\rangle}{\|\mathbf{u}\|\,\|\mathbf{r}\|}
+\]
+
+where \(\mathbf{u}\) and \(\mathbf{r}\) are vectorized forms of \(U^{*}\) and \(R\). It is converted to a \(0\) to \(100\) score:
+
+\[
+S_{\text{cos}} = 50(\text{cos\_sim}+1)
+\]
+
+\subsubsection{Metric 2: DTW Distance}
+
+Dynamic Time Warping (DTW) captures temporal correspondence when execution speeds differ. Frame-wise costs are accumulated through dynamic programming to obtain an alignment-aware distance \(D_{\text{dtw}}\), then mapped to score space:
+
+\[
+S_{\text{dtw}} = \max\left(0,\;100\left(1-\frac{D_{\text{dtw}}}{0.8}\right)\right)
+\]
+
+\subsubsection{Metric 3: Technique-Specific Angle Error}
+
+A technique-aware angular term compares key joint-angle chains (e.g., elbow-centered chains for punches, hip-knee-ankle chains for kicks). The mean absolute angular deviation \(E_{\text{ang}}\) is transformed as:
+
+\[
+S_{\text{ang}} = \max\left(0,\;100\left(1-\frac{E_{\text{ang}}}{90}\right)\right)
+\]
+
+This term increases biomechanical relevance and helps isolate form-specific errors.
+
+\subsubsection{Metric 4: Mean Pose Distance}
+
+A direct geometric discrepancy term computes average frame-level joint distance \(D_{\text{pose}}\):
+
+\[
+S_{\text{dist}} = \max\left(0,\;100\left(1-\frac{D_{\text{pose}}}{0.8}\right)\right)
+\]
+
+This metric captures overall spatial mismatch not fully explained by angle-only features.
+
+\subsubsection{Final Score Fusion}
+
+The final score is a weighted sum of the four normalized components:
+
+\[
+S = 0.35S_{\text{cos}} + 0.25S_{\text{dtw}} + 0.25S_{\text{ang}} + 0.15S_{\text{dist}}
+\]
+
+\[
+S \leftarrow \text{clip}(S,0,100)
+\]
+
+The weighting emphasizes global similarity while preserving temporal and kinematic sensitivity.
+
+\subsubsection{Best-Match Selection Across References}
+
+For a given target technique, the system evaluates all available angle references and keeps the maximum-scoring match. The selected match provides both the final score and contextual metadata (e.g., matched angle, mirror usage), which are used in feedback and visualization.
+
+\subsubsection{Decision Threshold and Interpretation}
+
+Execution quality is determined by comparing \(S\) to a threshold \(\tau\):
+
+\[
+\text{correct}=
+\begin{cases}
+1, & S \ge \tau \\
+0, & S < \tau
+\end{cases}
+\]
+
+A global default threshold is used initially, with optional per-technique calibration. Because component metrics are retained, the system supports interpretable diagnosis: low \(S_{\text{dtw}}\) suggests timing mismatch, low \(S_{\text{ang}}\) indicates biomechanical error, and low \(S_{\text{cos}}\) or \(S_{\text{dist}}\) reflects broader shape/spatial misalignment.
+
+\subsection{Decision Rule and Feedback Logic}
+
+The system converts continuous similarity analysis into coaching decisions through a threshold-based rule and a layered feedback strategy. The objective is not only to classify execution as acceptable or unacceptable, but also to communicate clear and actionable guidance.
+
+\subsubsection{Decision Rule}
+
+For each evaluated sequence window, the comparison module returns a fused score \(S \in [0,100]\). A decision threshold \(\tau\) is then applied:
+
+\[
+\text{correct}=
+\begin{cases}
+1, & S \ge \tau \\
+0, & S < \tau
+\end{cases}
+\]
+
+A global threshold is used as the default operating point, while per-technique overrides can be introduced during calibration. This allows the system to account for natural score-distribution differences between techniques (e.g., punches versus kicks).
+
+\subsubsection{Reference-Aware Decision Context}
+
+The decision is made after selecting the best-matching reference candidate within the target technique bank. Therefore, each verdict is accompanied by contextual metadata such as:
+
+\begin{itemize}
+    \item matched angle variant,
+    \item mirror-selection state,
+    \item component metric values (cosine, DTW, angle, distance).
+\end{itemize}
+
+This context is essential for interpretation and troubleshooting, as it links the binary decision to concrete match evidence.
+
+\subsubsection{Textual Feedback Generation}
+
+When a sequence is evaluated, a rule-based feedback module produces concise coaching messages from normalized joint geometry and score level. The logic is technique-aware:
+
+\begin{itemize}
+    \item punch-oriented rules emphasize extension and guard positioning,
+    \item kick-oriented rules emphasize kicking-leg extension and support-leg stability.
+\end{itemize}
+
+A small number of short messages are preferred over verbose explanations to preserve readability in real-time use.
+
+\subsubsection{Score-Conditioned Messaging}
+
+Feedback is conditioned by confidence level. For low scores, the system prioritizes high-impact correction prompts (e.g., slow down, improve extension). For high scores, neutral or positive reinforcement is used. This avoids contradictory messaging and keeps user guidance aligned with evaluation confidence.
+
+\subsubsection{Visual Feedback Coupling}
+
+The decision output also controls visual overlays in the interface:
+
+\begin{itemize}
+    \item status panel shows technique, matched angle, score, and threshold state,
+    \item when below threshold, a projected ghost target pose is displayed to indicate desired geometry.
+\end{itemize}
+
+By linking decision state and visual guidance, the system supports immediate correction loops during practice.
+
+\subsubsection{Operational Considerations}
+
+In practice, isolated window decisions can be noisy due to transient tracking errors. Therefore, trend-based interpretation over consecutive windows is recommended for analysis and reporting. This improves stability and yields a more realistic representation of user technique progression over time.
+
+\subsection{Visual Coaching Interface}
+
+The visual coaching interface is designed to translate numerical evaluation into immediate, user-understandable guidance during practice. Rather than showing only a final score, the interface combines status information and corrective visualization so users can identify and adjust errors in real time.
+
+\subsubsection{Design Goals}
+
+The interface is built around three goals:
+
+\begin{itemize}
+    \item \textbf{Clarity}: present only high-value information during movement.
+    \item \textbf{Actionability}: show what should be corrected, not only whether performance is wrong.
+    \item \textbf{Low cognitive load}: avoid clutter that distracts from execution.
+\end{itemize}
+
+\subsubsection{Compact Status Panel}
+
+A compact panel overlays essential runtime information:
+
+\begin{itemize}
+    \item target technique,
+    \item matched reference angle,
+    \item current score and decision threshold,
+    \item short technique-specific feedback text.
+\end{itemize}
+
+This panel provides a stable, glanceable summary of current performance state and supports quick interpretation during continuous motion.
+
+\subsubsection{Ghost Target Pose Overlay}
+
+When the score is below threshold, the system projects a reference pose into the current image frame and renders it as a semi-transparent skeleton. This ghost overlay acts as a visual target, allowing the user to compare their posture directly against the desired configuration.
+
+Because the projection is anchored to the user's current body frame, the feedback remains contextual and easier to follow than static external diagrams.
+
+\subsubsection{Correction Cue Strategy}
+
+The interface prioritizes visual simplicity. Earlier versions included denser directional cues, but this could produce clutter in live scenarios. The current strategy emphasizes readable target-shape guidance through the ghost overlay and concise textual prompts, improving usability during fast techniques.
+
+\subsubsection{Feedback Timing Behavior}
+
+Visual guidance is condition-dependent:
+
+\begin{itemize}
+    \item \textbf{Above threshold}: maintain status panel and positive/neutral messaging.
+    \item \textbf{Below threshold}: activate corrective visual guidance and stronger coaching prompts.
+\end{itemize}
+
+This conditional behavior avoids constant visual overload while still delivering clear intervention when needed.
+
+\subsubsection{Practical Value for Training}
+
+In practical sessions, the interface supports a short correction loop:
+
+\begin{enumerate}
+    \item execute movement,
+    \item observe score and matched angle,
+    \item align posture toward the ghost target,
+    \item repeat and track score trend.
+\end{enumerate}
+
+This loop makes the system useful not only as an evaluator but as an active coaching aid for self-guided technical refinement.
+
+\subsection{Implementation and Reproducibility}
+
+The system was implemented with a modular software design to support iterative development, controlled experimentation, and transparent analysis. Core functionality is separated into reference collection, runtime inference, scoring, visualization, and artifact export. This structure makes it possible to modify one component (e.g., thresholds or capture gates) without destabilizing the full pipeline.
+
+\subsubsection{Implementation Stack}
+
+The project is implemented in Python and uses:
+
+\begin{itemize}
+    \item \textbf{Ultralytics/YOLO pose estimation} for frame-level keypoint extraction,
+    \item \textbf{NumPy} for sequence and metric computation,
+    \item \textbf{OpenCV} for video I/O, overlays, and runtime visualization.
+\end{itemize}
+
+This stack was selected for practical deployment on commodity hardware and straightforward integration of custom scoring logic.
+
+\subsubsection{Module Responsibilities}
+
+At a high level, modules are organized by responsibility:
+
+\begin{itemize}
+    \item \textbf{Reference capture orchestration}: batch execution from plan files and acceptance-gate filtering.
+    \item \textbf{Reference QA tooling}: preview generation and manual review support.
+    \item \textbf{Trainer runtime}: tracking, sequence buffering, score computation, and on-screen feedback.
+    \item \textbf{Structured output writing}: persistent run artifacts for analysis and reporting.
+\end{itemize}
+
+This separation increases maintainability and supports reproducible ablation/testing workflows.
+
+\subsubsection{Structured Artifact Logging}
+
+Each run generates structured outputs (e.g., configuration snapshot, per-window metrics, and optional track/keypoint exports). These artifacts enable:
+
+\begin{itemize}
+    \item exact reconstruction of run conditions,
+    \item quantitative post-hoc analysis,
+    \item comparison across threshold or reference-library versions.
+\end{itemize}
+
+Because scoring decisions are traceable to saved metrics, debugging and supervisor review are significantly more transparent.
+
+\subsubsection{Reference Reproducibility Strategy}
+
+Reference generation is controlled by plan files and deterministic execution settings where possible. The collection pipeline records progress and outcomes per job, including skipped, completed, and interrupted states. This allows partial overnight runs to resume systematically without discarding prior valid outputs.
+
+\subsubsection{Experimental Reproducibility Considerations}
+
+To improve consistency across evaluations, the methodology emphasizes:
+
+\begin{itemize}
+    \item fixed reference directory snapshots during testing,
+    \item explicit threshold/version reporting,
+    \item stable input sources (preferably local files over unstable live streams),
+    \item consistent preprocessing and sequence-window parameters.
+\end{itemize}
+
+In practice, source-stream instability can introduce non-methodological variance; therefore, local mirrored datasets are recommended for final benchmark experiments.
+
+\subsubsection{Limitations and Extension Readiness}
+
+Although the current implementation is CPU-oriented and reference-driven, the architecture is intentionally extension-ready. Future upgrades (e.g., GPU acceleration, learned ranking modules, per-technique auto-calibration) can be integrated without replacing the full pipeline. This supports both bachelor-level reproducibility requirements and long-term research scalability.
+
+\subsection{Pipeline Overview}
+
+The proposed system follows a reference-driven coaching pipeline that transforms raw video input into interpretable performance feedback. The end-to-end process is organized into three major phases: reference preparation, runtime evaluation, and feedback delivery.
+
+\subsubsection{Phase 1: Reference Preparation}
+
+In the preparation phase, canonical motion templates are collected for each target technique and camera angle. Candidate windows are extracted from curated video sources and filtered using quality gates (motion, structural closure, and optional consistency checks). Accepted samples are saved in a structured reference library.
+
+This phase establishes the knowledge base used by the trainer and is therefore critical to system reliability.
+
+\subsubsection{Phase 2: Runtime Pose Processing and Matching}
+
+During inference, each incoming frame is processed by a pose detector, and per-track keypoint sequences are accumulated over sliding windows. The sequence is normalized to body-centered coordinates and temporally resampled to align with reference length.
+
+The system then compares the user window against all relevant references using a multi-metric scoring strategy (cosine similarity, DTW distance, technique-specific angle error, and mean pose distance). Mirror handling is applied automatically, and the highest scoring reference-angle pair is selected.
+
+\subsubsection{Phase 3: Decision and Feedback Output}
+
+The fused score is evaluated against a threshold to determine correctness. Based on this decision, the system generates:
+
+\begin{itemize}
+    \item a compact status summary (technique, matched angle, score),
+    \item short rule-based coaching text,
+    \item visual corrective guidance (ghost target pose when below threshold).
+\end{itemize}
+
+This transforms numerical matching into a practical coaching loop for iterative self-correction.
+
+\subsubsection{Operational Characteristics}
+
+The pipeline is modular and iterative. Reference collection can continue improving the template bank over time, while scoring and feedback remain stable at runtime. This enables continuous refinement without redesigning the full system architecture.
+
+\subsection{Input Processing and Pose Extraction}
+
+This stage converts raw video streams into structured pose trajectories that can be compared against the reference library. Since all downstream scoring depends on keypoint quality, the extraction pipeline is designed to be stable, confidence-aware, and suitable for temporal analysis.
+
+\subsubsection{Input Sources}
+
+The runtime supports multiple input types, including webcam streams, local video files, and online video URLs. Regardless of source type, frames are decoded into a unified processing stream so that inference and scoring logic remain identical across experiments.
+
+\subsubsection{Frame-Level Pose Detection}
+
+Each frame is processed by a pose estimation model that outputs body keypoints and confidence values. The detector provides a fixed skeletal topology, allowing consistent joint indexing across time and across users. Confidence values are retained because they are later used to suppress unreliable joints during normalization and metric computation.
+
+\subsubsection{Track-Centric Sequence Construction}
+
+Because technique assessment is temporal, isolated frames are insufficient. The system therefore accumulates keypoints per tracked subject into sliding windows. Each window represents a short movement segment used for scoring against reference templates.
+
+Track-centric buffering provides two benefits:
+
+\begin{itemize}
+    \item preserves temporal continuity for each subject,
+    \item prevents mixing poses from different people in multi-person scenes.
+\end{itemize}
+
+\subsubsection{Confidence-Aware Joint Filtering}
+
+Low-confidence joints are treated as invalid observations rather than trusted coordinates. This reduces noise propagation into distance and angle metrics, especially for fast limb motion where detector uncertainty is common. Invalid joints are explicitly represented, enabling downstream functions to ignore unsupported comparisons safely.
+
+\subsubsection{Pre-Scoring Standardization}
+
+Before comparison, each buffered sequence is passed to preprocessing (normalization, resampling, and mirror evaluation). This standardization ensures that scoring reflects movement similarity rather than camera position, scale variation, or sequence length mismatch.
+
+\subsubsection{Output of This Stage}
+
+The output is a temporally ordered, confidence-filtered pose sequence per active track, ready for reference matching. In effect, this stage acts as the measurement backbone of the full trainer: if extraction is stable, subsequent scoring and coaching outputs become substantially more reliable and interpretable.
+
+\subsection{Reference Library Representation}
+
+The reference library is represented as a structured collection of pose sequences, organized to support efficient retrieval, angle-aware matching, and transparent analysis. Because the trainer is template-based, the representation is designed to preserve motion semantics while remaining lightweight and reproducible.
+
+\subsubsection{Data Unit}
+
+The fundamental data unit is a short pose sequence window, stored as a tensor of frame-wise body keypoints. Each sample captures a complete movement segment of a specific technique, including its temporal progression (initiation, extension/contact, recovery where applicable).
+
+\subsubsection{Storage Layout}
+
+References are stored in a hierarchical format by technique and viewing angle. A typical layout is:
+
+\begin{itemize}
+    \item \texttt{reference\_poses/<technique>/<angle>.npy}
+    \item optional indexed variants for additional examples, e.g. \texttt{right45\_02.npy}
+\end{itemize}
+
+This structure enables direct lookup of all references for a target technique and supports angle-specific matching without additional metadata parsing.
+
+\subsubsection{Label and Angle Semantics}
+
+Each reference carries two semantic keys:
+
+\begin{itemize}
+    \item \textbf{Technique label}: action class (e.g., jab, front\_kick).
+    \item \textbf{Angle label}: viewpoint category (front, left45, right45, side).
+\end{itemize}
+
+During runtime, the system evaluates all available angle variants for the target technique and selects the highest-scoring candidate. This improves robustness when user viewpoint differs from a single canonical perspective.
+
+\subsubsection{Multiple Examples per Angle}
+
+To reduce overfitting to a single performer execution, multiple references per technique-angle pair are supported. This creates a small intra-class bank that captures natural variation in timing and form while preserving class identity. At inference time, best-match selection across this set improves stability and reduces template bias.
+
+\subsubsection{Compatibility with Preprocessing and Metrics}
+
+Reference arrays are stored in a format directly compatible with the normalization and scoring pipeline. This minimizes conversion overhead and ensures that each runtime comparison follows the same preprocessing assumptions used during reference curation.
+
+\subsubsection{Design Rationale}
+
+This representation balances simplicity and expressiveness:
+
+\begin{itemize}
+    \item simple enough for fast loading and debugging,
+    \item expressive enough to encode technique and viewpoint diversity,
+    \item extensible for future metadata (performer ID, source quality, calibration version).
+\end{itemize}
+
+As a result, the reference library functions not only as a static template store but as a maintainable knowledge base that can evolve through iterative capture and quality review.
+
+\subsection{Temporal Alignment and Orientation Handling}
+
+Reliable sequence comparison requires explicit handling of two common sources of mismatch: execution speed differences and left/right body laterality. Even when technique quality is similar, direct frame-to-frame comparison can fail if one sequence is faster or mirrored relative to the reference. This subsection describes how the system resolves both issues before final scoring.
+
+\subsubsection{Temporal Length Normalization}
+
+User and reference windows may contain different numbers of frames due to varying movement speed, input FPS, and track duration. To enable comparable metric computation, both sequences are resampled to a common target length. This standardization ensures that downstream similarity components operate over aligned dimensionality.
+
+\subsubsection{Dynamic Time Warping for Phase Alignment}
+
+After length normalization, temporal phase differences can still remain (e.g., one performer reaches extension earlier). The system therefore uses Dynamic Time Warping (DTW) to align the two sequences along a flexible temporal path. DTW minimizes cumulative frame-level cost under monotonic constraints, making comparison less sensitive to local timing variation.
+
+In practical terms, DTW distinguishes ``same technique at different tempo'' from true form mismatch.
+
+\subsubsection{Orientation Ambiguity in Martial Arts Execution}
+
+Many martial arts actions can be executed on either body side. A right-side punch can be geometrically mirrored relative to a left-side reference while still being technically valid. If laterality is not handled, this produces false penalties in shape-based metrics.
+
+\subsubsection{Mirror Evaluation Strategy}
+
+To address this, the system evaluates two user variants:
+
+\begin{itemize}
+    \item original normalized sequence \(U\),
+    \item horizontally mirrored sequence \(U^{m}\).
+\end{itemize}
+
+A similarity pre-check (cosine agreement) is computed for both against reference \(R\), and the better orientation is selected for full metric evaluation:
+
+\[
+U^{*}=
+\begin{cases}
+U^{m}, & \text{if } \cos(U^{m},R) > \cos(U,R) \\
+U, & \text{otherwise}
+\end{cases}
+\]
+
+The selected orientation is stored as metadata (mirror-used flag), improving interpretability of matched results.
+
+\subsubsection{Combined Effect on Robustness}
+
+Temporal alignment and orientation handling jointly reduce false mismatch rates. Temporal normalization addresses pacing differences, while mirror handling addresses side preference differences. Together, they make the scoring pipeline more invariant to execution style and recording conditions without sacrificing biomechanical specificity.
+
+\subsubsection{Practical Coaching Implications}
+
+These mechanisms improve fairness during training sessions. Users are evaluated on technical quality rather than arbitrary factors such as whether they execute from left or right stance, or whether their movement cadence is slightly faster/slower than the template. This increases trust in score outputs and makes corrective feedback more meaningful.
+
+\subsection{Similarity Metrics and Score Fusion}
+
+The comparison module combines multiple metrics to capture complementary aspects of technique quality. A single metric is often insufficient in martial arts analysis because good execution depends simultaneously on posture geometry, temporal rhythm, and biomechanical joint structure. The proposed fusion strategy therefore integrates four components into one interpretable final score.
+
+\subsubsection{Metric Design Rationale}
+
+The metric set was selected to balance robustness and interpretability:
+
+\begin{itemize}
+    \item a \textbf{global shape term} to capture overall pose agreement,
+    \item a \textbf{temporal alignment term} to handle speed differences,
+    \item a \textbf{technique-aware kinematic term} to preserve biomechanical meaning,
+    \item a \textbf{direct spatial error term} for absolute geometric discrepancy.
+\end{itemize}
+
+Together, these reduce failure risk from any single comparison perspective.
+
+\subsubsection{Cosine Similarity (\(S_{\text{cos}}\))}
+
+Cosine similarity is computed on flattened normalized sequences and measures global directional agreement in pose-space. It is effective for broad shape matching and insensitive to uniform scale after normalization.
+
+\[
+S_{\text{cos}} = 50(\text{cos\_sim}+1), \quad \text{cos\_sim}\in[-1,1]
+\]
+
+\subsubsection{DTW-Based Temporal Similarity (\(S_{\text{dtw}}\))}
+
+Dynamic Time Warping (DTW) computes alignment-aware sequence distance, handling phase and speed variation between user and reference trajectories. The resulting distance is converted to a bounded score:
+
+\[
+S_{\text{dtw}}=\max\left(0,\;100\left(1-\frac{D_{\text{dtw}}}{0.8}\right)\right)
+\]
+
+\subsubsection{Technique-Specific Angle Similarity (\(S_{\text{ang}}\))}
+
+Technique-relevant joint-angle triplets are evaluated over time, and mean absolute angular error is mapped to score space:
+
+\[
+S_{\text{ang}}=\max\left(0,\;100\left(1-\frac{E_{\text{ang}}}{90}\right)\right)
+\]
+
+This term introduces biomechanical specificity (e.g., elbow extension for punches, knee/hip chains for kicks).
+
+\subsubsection{Mean Pose Distance Similarity (\(S_{\text{dist}}\))}
+
+A direct frame-level geometric distance term captures average spatial mismatch across valid joints:
+
+\[
+S_{\text{dist}}=\max\left(0,\;100\left(1-\frac{D_{\text{pose}}}{0.8}\right)\right)
+\]
+
+It complements cosine similarity by preserving absolute normalized displacement information.
+
+\subsubsection{Weighted Score Fusion}
+
+The final score is formed as a weighted sum:
+
+\[
+S = 0.35S_{\text{cos}} + 0.25S_{\text{dtw}} + 0.25S_{\text{ang}} + 0.15S_{\text{dist}}
+\]
+
+\[
+S \leftarrow \text{clip}(S,0,100)
+\]
+
+The weighting emphasizes global form while preserving strong contributions from temporal and kinematic consistency.
+
+\subsubsection{Interpretability of the Fusion Output}
+
+Because all components are retained, the fused score remains diagnosable:
+
+\begin{itemize}
+    \item low \(S_{\text{dtw}}\): timing/phase inconsistency,
+    \item low \(S_{\text{ang}}\): technique-form deviation at key joints,
+    \item low \(S_{\text{cos}}\) and/or \(S_{\text{dist}}\): broad shape/spatial mismatch.
+\end{itemize}
+
+This decomposition is important for coaching, as it links score outcomes to specific correction priorities rather than returning an opaque scalar only.
+
+\subsection{Best-Match Selection and Decision Rule}
+
+After metric computation, the system must determine which reference template best represents the observed user motion and whether the execution quality is acceptable. This step links continuous similarity analysis to actionable coaching outcomes.
+
+\subsubsection{Candidate Set per Evaluation Window}
+
+For each user sequence window, comparison is performed against all available reference sequences within the selected technique bank. If multiple angle variants and indexed examples exist, each is treated as a separate candidate. This expands coverage of viewpoint and execution variation.
+
+\subsubsection{Best-Match Selection}
+
+Let \(S_i\) denote the fused score for reference candidate \(i\). The selected match is the maximum-scoring candidate:
+
+\[
+i^{*}=\arg\max_i S_i
+\]
+
+\[
+S^{*}=S_{i^{*}}
+\]
+
+The system retains not only \(S^{*}\), but also contextual metadata from \(i^{*}\), including matched angle and mirror-selection state. This context is later shown in the interface and logged for analysis.
+
+\subsubsection{Why Max-Score Selection Is Used}
+
+Max-score selection is appropriate in this setting because:
+\begin{itemize}
+    \item users may appear from different viewpoints than a single canonical reference,
+    \item natural execution variance exists even within the same technique,
+    \item multi-reference banks improve robustness without requiring a full learned classifier.
+\end{itemize}
+
+Selecting the top-scoring candidate yields the most plausible template explanation for the observed motion window.
+
+\subsubsection{Decision Rule}
+
+The best score is converted to a correctness decision using a threshold \(\tau\):
+
+\[
+\text{correct}=
+\begin{cases}
+1, & S^{*}\ge\tau \\
+0, & S^{*}<\tau
+\end{cases}
+\]
+
+A global threshold is used as the baseline operating point, with optional per-technique overrides when calibration data is available.
+
+\subsubsection{Operational Calibration}
+
+Threshold choice controls the precision-recall balance of coaching decisions:
+\begin{itemize}
+    \item higher \(\tau\): stricter technical standard, fewer false positives but more false negatives,
+    \item lower \(\tau\): more permissive acceptance, useful for early-stage practice sessions.
+\end{itemize}
+
+In practice, calibration is performed by reviewing score distributions on known-correct and known-incorrect examples per technique.
+
+\subsubsection{Decision Stability Considerations}
+
+Single-window decisions may fluctuate due to transient tracking noise. For reporting and coaching interpretation, short-horizon trend analysis (multiple consecutive windows) is preferred over isolated frames. This improves reliability and better reflects real movement quality over time.
+
+\subsection{Feedback Generation and Correction Visualization}
+
+The system is designed not only to score technique execution but to provide actionable coaching guidance. This is achieved through a combined feedback layer that links metric outcomes to short textual advice and contextual visual cues.
+
+\subsubsection{Feedback Objectives}
+
+The feedback module follows three principles:
+
+\begin{itemize}
+    \item \textbf{Interpretability}: users should understand why performance is low.
+    \item \textbf{Actionability}: feedback should suggest concrete correction direction.
+    \item \textbf{Low latency}: output must remain readable in near real-time practice.
+\end{itemize}
+
+\subsubsection{Textual Feedback Generation}
+
+Text feedback is generated through technique-aware rule logic over normalized pose geometry. The rules focus on high-impact posture elements:
+
+\begin{itemize}
+    \item punch-related checks prioritize extension and guard alignment,
+    \item kick-related checks prioritize kicking-leg extension and support-leg stability.
+\end{itemize}
+
+Messages are intentionally concise and capped in number per evaluation step to avoid overwhelming the user during movement execution.
+
+\subsubsection{Score-Conditioned Feedback Behavior}
+
+Feedback intensity is conditioned by the final score relative to threshold:
+
+\begin{itemize}
+    \item \textbf{below threshold}: corrective cues are emphasized,
+    \item \textbf{near threshold}: neutral guidance maintains focus on refinement,
+    \item \textbf{above threshold}: positive reinforcement confirms acceptable form.
+\end{itemize}
+
+This helps maintain a coherent training experience across beginner and advanced performance levels.
+
+\subsubsection{Correction Visualization Pipeline}
+
+Visual correction uses an overlay strategy tied to the best-matching reference:
+
+\begin{enumerate}
+    \item identify the reference frame/sequence context from best match,
+    \item project target pose into the current user frame context,
+    \item render the target as a semi-transparent ghost skeleton when corrective guidance is needed.
+\end{enumerate}
+
+The projection keeps guidance spatially grounded, allowing immediate comparison between current and desired posture.
+
+\subsubsection{Interface Components}
+
+The final coaching interface combines:
+
+\begin{itemize}
+    \item a compact status panel (technique, matched angle, score, threshold state),
+    \item short textual correction cues,
+    \item ghost target overlay for posture alignment.
+\end{itemize}
+
+This layered design supports both quick glance interpretation and direct physical adjustment.
+
+\subsubsection{Usability and Clutter Control}
+
+A practical challenge in live coaching UIs is visual clutter. The implemented design favors clear target-shape guidance and concise messaging over dense directional overlays. This improves readability during fast techniques and reduces cognitive load.
+
+\subsubsection{Training Impact}
+
+By coupling score decomposition with visual guidance, the system supports an iterative correction loop: execute, observe, adjust, and repeat. This makes the module useful as a coaching assistant rather than a passive evaluator, aligning technical inference with real training behavior.
+
+\subsection{Reference Capture Methodology}
+
+Because the trainer is reference-based, the capture methodology is treated as a controlled experimental process rather than simple data gathering. The objective is to create a reference bank that is technically representative, temporally complete, and consistent across techniques and camera viewpoints.
+
+\subsubsection{Capture Objectives}
+
+The capture process is designed to satisfy four objectives:
+
+\begin{itemize}
+    \item \textbf{Technique fidelity}: reference windows should represent correct execution.
+    \item \textbf{Temporal completeness}: each window should include meaningful action progression.
+    \item \textbf{Viewpoint coverage}: each technique should be represented across target camera angles.
+    \item \textbf{Repeatability}: collection should be reproducible with explicit plans and parameters.
+\end{itemize}
+
+\subsubsection{Plan-Driven Collection Protocol}
+
+Capture jobs are defined in a structured plan (CSV), where each row corresponds to one technique-angle target and associated source URLs. A batch runner executes only rows marked as ready and attempts to collect a fixed number of valid examples per angle.
+
+This protocol ensures traceable coverage, supports unattended long runs, and enables partial resume if runs are interrupted.
+
+\subsubsection{Candidate Window Extraction}
+
+For each source, multiple candidate sequence windows are generated from tracked pose streams. Windows are evaluated before acceptance, rather than saving raw detections directly. This reduces the probability of storing irrelevant or low-quality motion fragments.
+
+\subsubsection{Quality Gates}
+
+Each candidate must pass quality gates:
+
+\begin{itemize}
+    \item \textbf{Motion gate}: rejects near-static windows.
+    \item \textbf{Return-closure gate}: enforces extension and recovery structure.
+    \item \textbf{Optional score-consistency gate}: filters severe outliers relative to existing references.
+\end{itemize}
+
+These gates improve semantic quality and reduce downstream scoring instability.
+
+\subsubsection{Capture Modes}
+
+Two operational modes are used:
+
+\begin{itemize}
+    \item \textbf{First-valid mode}: save the first candidate passing all gates.
+    \item \textbf{Best-window mode}: evaluate multiple valid candidates and keep the strongest one.
+\end{itemize}
+
+First-valid mode is faster for bootstrapping; best-window mode is preferred for final curation quality.
+
+\subsubsection{Storage and Versioning Practice}
+
+Accepted references are stored in a hierarchical technique/angle structure, with indexed variants for multiple examples. This representation supports best-match retrieval at runtime and allows targeted replacement of weak samples without rebuilding the full library.
+
+\subsubsection{Post-Capture QA Loop}
+
+Captured references are reviewed using visualization previews. Samples with mistimed peaks, static motion, or unstable keypoint tracking are removed and recaptured with adjusted gates. This iterative QA loop is essential for maintaining library integrity over project evolution.
+
+\subsubsection{Methodological Implications}
+
+The methodology trades large-scale annotation for controlled template curation. This is appropriate for an interpretable coaching system, but it also means performance depends strongly on reference quality and coverage. Therefore, reference capture is treated as a continuous refinement cycle, not a one-time preprocessing step.
+
+\subsection{Implementation Strategy}
+
+The implementation strategy was designed to support iterative research development while keeping runtime behavior stable and explainable. Instead of a monolithic script, the project follows a modular architecture where collection, scoring, visualization, and evaluation are separated into focused components with clear responsibilities.
+
+\subsubsection{Design Principles}
+
+Four engineering principles guided implementation:
+
+\begin{itemize}
+    \item \textbf{Modularity}: isolate concerns so components can evolve independently.
+    \item \textbf{Traceability}: preserve metric-level and run-level artifacts for analysis.
+    \item \textbf{Reproducibility}: run the same workflows with explicit parameters and plans.
+    \item \textbf{Practicality}: maintain real-time feasibility on available hardware.
+\end{itemize}
+
+\subsubsection{Component Decomposition}
+
+The system is organized into functional layers:
+
+\begin{itemize}
+    \item \textbf{Reference collection layer}: plan-driven capture and quality-gated saving.
+    \item \textbf{Inference layer}: frame processing, tracking, sequence buffering, and matching.
+    \item \textbf{Scoring layer}: metric computation and weighted fusion.
+    \item \textbf{Feedback layer}: text generation and visual coaching overlays.
+    \item \textbf{Evaluation/logging layer}: structured outputs for post-run analysis.
+\end{itemize}
+
+This decomposition reduces coupling and simplifies targeted debugging.
+
+\subsubsection{Incremental Development Approach}
+
+Implementation proceeded iteratively:
+\begin{enumerate}
+    \item establish baseline pose extraction and sequence buffering,
+    \item integrate reference matching and fused scoring,
+    \item add feedback UI/overlay behavior,
+    \item develop batch capture and QA tooling,
+    \item refine thresholds, quality gates, and runtime stability.
+\end{enumerate}
+
+This staged approach allowed empirical validation at each milestone before adding further complexity.
+
+\subsubsection{Runtime vs. Offline Separation}
+
+The strategy explicitly separates online and offline workloads:
+
+\begin{itemize}
+    \item \textbf{offline}: reference generation, curation, and experiment analysis,
+    \item \textbf{online}: low-latency scoring and coaching during playback/webcam use.
+\end{itemize}
+
+By moving expensive curation and quality checks offline, runtime coaching remains responsive and operationally simple.
+
+\subsubsection{Configuration and Experiment Control}
+
+Key parameters (thresholds, capture gates, sequence settings, source options) are exposed via command-line configuration. This avoids hard-coded experiment behavior and enables reproducible tuning across runs. Structured output files provide run-specific metadata for later comparison and reporting.
+
+\subsubsection{Maintainability and Extension Planning}
+
+The implementation is intentionally extension-ready. Candidate future upgrades (per-technique auto-calibration, hybrid learned reranking, GPU acceleration, richer feedback modules) can be integrated as incremental modules rather than requiring a full rewrite. This supports both bachelor-project delivery constraints and longer-term research continuity.
+
+\subsubsection{Practical Outcome}
+
+Overall, the strategy balances research flexibility with software robustness. It enables fast iteration on methodology while preserving a stable and demonstrable training pipeline suitable for evaluation, presentation, and future extension.
+
+\subsection{Feedback and Correction Visualization}
+
+The feedback layer is responsible for translating metric outputs into guidance that users can apply immediately during training. The design prioritizes interpretability and usability: users should understand current performance status, identify mismatch direction, and attempt correction in the next movement cycle.
+
+\subsubsection{Role in the Pipeline}
+
+After best-match selection and threshold evaluation, the feedback module receives:
+
+\begin{itemize}
+    \item final fused score and threshold state,
+    \item matched technique-angle context,
+    \item selected comparison metrics,
+    \item current and target pose geometry.
+\end{itemize}
+
+It then generates synchronized textual and visual cues for coaching.
+
+\subsubsection{Textual Feedback Generation}
+
+Text feedback is produced by compact, technique-aware rule logic. The rules inspect normalized joint relationships and prioritize high-impact corrective messages:
+
+\begin{itemize}
+    \item punch-focused prompts emphasize extension and guard alignment,
+    \item kick-focused prompts emphasize kicking-leg extension and support-leg stability.
+\end{itemize}
+
+Messages are intentionally short and limited in count to remain readable during motion.
+
+\subsubsection{Visual Feedback Components}
+
+The visual interface combines two main components:
+
+\begin{itemize}
+    \item \textbf{Compact status panel}: technique, matched angle, score, threshold, and brief advice.
+    \item \textbf{Ghost target overlay}: semi-transparent projected target pose displayed when correction is needed.
+\end{itemize}
+
+The ghost overlay is rendered in the user's current image context, allowing direct posture comparison without shifting attention to external references.
+
+\subsubsection{Condition-Dependent Behavior}
+
+Feedback intensity is controlled by decision state:
+
+\begin{itemize}
+    \item \textbf{Above threshold}: maintain status panel and confirm acceptable form.
+    \item \textbf{Below threshold}: activate corrective visual guidance and stronger coaching prompts.
+\end{itemize}
+
+This prevents unnecessary visual load when execution is already acceptable.
+
+\subsubsection{Usability and Clutter Management}
+
+A practical challenge in real-time coaching is overlay clutter. The implemented strategy favors clear target-shape visualization and concise text over dense directional graphics. This improves readability and reduces cognitive burden during fast techniques.
+
+\subsubsection{Practical Coaching Loop}
+
+The integrated output supports an iterative loop:
+
+\begin{enumerate}
+    \item perform technique,
+    \item inspect score and matched-angle context,
+    \item align toward ghost target and follow text cue,
+    \item repeat and track score progression.
+\end{enumerate}
+
+This makes the system useful as an active coaching assistant rather than a passive scoring tool.
+
+\subsection{Software Architecture and Implementation}
+
+The software was developed as a modular research pipeline to balance runtime usability with experimental flexibility. The architecture separates data preparation, inference, scoring, feedback, and evaluation so each component can be improved independently without rewriting the full system.
+
+\subsubsection{Architectural Overview}
+
+At a high level, the system is organized into five cooperating layers:
+
+\begin{itemize}
+    \item \textbf{Input and Detection Layer}: video ingestion, frame decoding, and pose keypoint extraction.
+    \item \textbf{Sequence Processing Layer}: per-track buffering, normalization, temporal resampling, and orientation handling.
+    \item \textbf{Matching and Scoring Layer}: reference retrieval, multi-metric comparison, weighted fusion, and thresholding.
+    \item \textbf{Feedback Layer}: text advice generation and visual coaching overlays.
+    \item \textbf{Persistence and Evaluation Layer}: run artifact export, metrics logging, and post-run analysis support.
+\end{itemize}
+
+This layered design improves maintainability and keeps core algorithmic logic isolated from UI and orchestration concerns.
+
+\subsubsection{Core Runtime Module}
+
+The main runtime script handles end-to-end trainer inference. Its responsibilities include:
+
+\begin{itemize}
+    \item loading reference banks,
+    \item managing active tracks and sliding windows,
+    \item computing best-reference matches,
+    \item generating live score and feedback outputs,
+    \item writing structured run artifacts for reproducibility.
+\end{itemize}
+
+By centralizing runtime control, the system provides a consistent execution path across webcam, local video, and URL-based sources.
+
+\subsubsection{Reference Collection and QA Modules}
+
+Reference library generation is decoupled from trainer inference:
+
+\begin{itemize}
+    \item a batch collection module executes plan-driven capture jobs with quality gates,
+    \item a visualization module converts stored references into preview videos for manual QA.
+\end{itemize}
+
+This separation enables iterative curation of reference quality without affecting inference code stability.
+
+\subsubsection{Data and Artifact Organization}
+
+Project outputs are organized in structured directories for traceability:
+
+\begin{itemize}
+    \item reference templates grouped by technique and angle,
+    \item per-run folders containing configuration snapshots and metrics traces,
+    \item optional keypoint exports for deeper debugging and analysis.
+\end{itemize}
+
+Structured artifacts make experiments repeatable and simplify supervisor-facing evidence reporting.
+
+\subsubsection{Implementation Stack}
+
+The implementation uses Python with a practical CV stack:
+
+\begin{itemize}
+    \item pose estimation via Ultralytics YOLO-based models,
+    \item numerical processing via NumPy,
+    \item video I/O and overlays via OpenCV.
+\end{itemize}
+
+This stack was selected to support rapid iteration, clear debugging, and deployment on available CPU hardware.
+
+\subsubsection{Reproducibility and Extensibility}
+
+Reproducibility is supported through explicit runtime parameters, batch plan files, and saved run outputs. Extensibility is supported through modular boundaries, enabling future additions such as:
+
+\begin{itemize}
+    \item per-technique threshold auto-calibration,
+    \item learned reranking or hybrid scoring modules,
+    \item GPU acceleration and larger-scale evaluation workflows.
+\end{itemize}
+
+Overall, the architecture provides a stable foundation for both bachelor-level reporting and future research extensions.
+
+\section{Experiments and Results}
+
+\subsection{Experimental Setup}
+
+This section describes the configuration used to evaluate the proposed reference-based martial arts trainer. The setup was designed to assess both technical correctness scoring and practical coaching behavior under realistic usage conditions.
+
+\subsubsection{Hardware and Runtime Environment}
+
+All experiments were conducted on a consumer desktop environment (Windows-based, CPU-oriented execution). The runtime stack used Python with:
+
+\begin{itemize}
+    \item Ultralytics YOLO pose estimation for keypoint extraction,
+    \item NumPy for sequence and metric computation,
+    \item OpenCV for video processing, overlays, and artifact export.
+\end{itemize}
+
+No dedicated GPU acceleration was assumed in the core evaluation workflow, reflecting a practical deployment scenario for local training use.
+
+\subsubsection{Reference Library Condition}
+
+Experiments were run using a curated multi-technique reference library organized by technique and viewpoint angle. The evaluated set included common striking classes (e.g., jab, cross, hook, uppercut, front kick, side kick, roundhouse kick, fighting stance), with multiple examples per angle where available.
+
+Before testing, references were reviewed through preview-based QA to reduce static, mistimed, or detector-corrupted samples.
+
+\subsubsection{Input Data and Test Protocol}
+
+Evaluation inputs included:
+
+\begin{itemize}
+    \item local test videos with known technique segments,
+    \item mixed-performance clips containing both correct and incorrect executions,
+    \item additional source videos used for stress-testing temporal and viewpoint robustness.
+\end{itemize}
+
+For each run, the target technique setting and reference bank remained fixed to ensure comparable score behavior within an experiment.
+
+\subsubsection{Inference Configuration}
+
+The trainer operated with sliding sequence windows and confidence-aware pose preprocessing. Core scoring settings included:
+
+\begin{itemize}
+    \item sequence normalization to body-centered coordinates,
+    \item temporal resampling to aligned sequence length,
+    \item mirror-aware comparison,
+    \item fused multi-metric scoring (cosine, DTW, angle, pose distance),
+    \item threshold-based decision logic.
+\end{itemize}
+
+A global score threshold was used as the default decision boundary, with the option for per-technique calibration in later analysis.
+
+\subsubsection{Recorded Outputs}
+
+Each experiment produced structured run artifacts for reproducibility and analysis:
+
+\begin{itemize}
+    \item run configuration snapshot,
+    \item per-window metrics trace (scores and component metrics),
+    \item matched-angle and decision-state information,
+    \item optional keypoint and output video artifacts.
+\end{itemize}
+
+These artifacts enabled both quantitative trend analysis and qualitative review of feedback behavior.
+
+\subsubsection{Evaluation Focus}
+
+The experimental analysis was designed around three questions:
+
+\begin{enumerate}
+    \item \textbf{Scoring validity}: does the fused score reflect visible technique quality?
+    \item \textbf{Robustness}: how stable is matching under timing variation, viewpoint changes, and mixed-quality execution?
+    \item \textbf{Coaching utility}: do text and visual cues provide actionable correction guidance in practice?
+\end{enumerate}
+
+This setup supports both engineering validation and thesis-level discussion of practical effectiveness and limitations.
+
+\subsection{Reference Quality Analysis}
+
+Because the trainer is reference-driven, reference quality is a primary determinant of scoring reliability. This analysis evaluates how effectively the collection and QA workflow produced usable templates and identifies the main quality failure modes affecting downstream performance.
+
+\subsubsection{Evaluation Criteria}
+
+Reference quality was assessed using four practical criteria:
+
+\begin{itemize}
+    \item \textbf{Temporal validity}: whether the window captures a complete and meaningful action segment.
+    \item \textbf{Motion adequacy}: whether movement energy is sufficient to represent a real strike/kick rather than idle posture.
+    \item \textbf{Pose stability}: whether keypoint trajectories are coherent and not dominated by detector noise.
+    \item \textbf{Technique consistency}: whether the captured form aligns with expected technique mechanics for that class/angle.
+\end{itemize}
+
+\subsubsection{Collection Outcomes}
+
+The plan-driven capture process produced a growing multi-technique, multi-angle library with multiple examples per angle for many classes. Batch execution improved coverage and throughput, while acceptance gates reduced obvious low-quality samples at save time. However, quality remained uneven across technique-angle pairs, especially in classes with rapid limb motion or limited source diversity.
+
+\subsubsection{Observed Failure Modes}
+
+Manual preview inspection identified recurring failure types:
+
+\begin{itemize}
+    \item \textbf{Static or low-motion windows}: accepted candidates that did not represent meaningful execution.
+    \item \textbf{Mistimed windows}: captures centered on preparation/recovery instead of peak action phase.
+    \item \textbf{Tracking corruption}: unstable or missing joints during high-speed transitions.
+    \item \textbf{View inconsistency}: perspective mismatch reducing similarity robustness for certain test inputs.
+\end{itemize}
+
+These issues were more frequent in kicking references than in short punch sequences due to larger spatial displacement and higher detector sensitivity to fast motion.
+
+\subsubsection{Impact on Runtime Scoring}
+
+Weak references had measurable effects during inference:
+
+\begin{itemize}
+    \item lower maximum match scores for otherwise reasonable executions,
+    \item unstable matched-angle switching across adjacent windows,
+    \item increased false negatives when thresholding near decision boundary,
+    \item less informative correction cues due to imperfect target templates.
+\end{itemize}
+
+This confirms that reference quality is not a peripheral concern but a core performance bottleneck.
+
+\subsubsection{QA and Recapture Effectiveness}
+
+The preview-and-recapture loop improved quality over time by removing problematic samples and regenerating references with stricter gates. In practice, best-window capture mode produced more reliable templates than first-valid mode for final library curation, though at higher compute/time cost.
+
+\subsubsection{Interpretation}
+
+The analysis indicates that reference curation quality has first-order influence on system behavior. Improvements in template timing, motion completeness, and viewpoint coverage yielded clearer gains than minor metric-weight adjustments alone. Therefore, reference governance should be treated as a continuous optimization process.
+
+\subsubsection{Actionable Recommendations}
+
+Based on observed outcomes, the following measures are recommended for subsequent collection rounds:
+
+\begin{itemize}
+    \item tighten return-closure and motion thresholds for high-variance techniques,
+    \item prioritize best-window mode for final reference sets,
+    \item maintain minimum examples per technique-angle pair for robustness,
+    \item formalize a lightweight annotation protocol for peak-action timing,
+    \item perform periodic library audits before major evaluation runs.
+\end{itemize}
+
+\subsection{Trainer Evaluation on Test Videos}
+
+The trainer was evaluated on test videos to examine practical scoring behavior under realistic movement variability, including both correct and incorrect executions. The goal was to assess not only score output but also matched-angle stability and usefulness of feedback during continuous motion.
+
+\subsubsection{Evaluation Protocol}
+
+Each test run was executed with:
+
+\begin{itemize}
+    \item a fixed target technique setting,
+    \item the current curated multi-angle reference bank,
+    \item identical preprocessing and scoring configuration across runs.
+\end{itemize}
+
+For every sequence window, the system logged fused score, component metrics, matched reference angle, mirror-selection state, and decision outcome relative to threshold.
+
+\subsubsection{Test Video Characteristics}
+
+The evaluation set included:
+
+\begin{itemize}
+    \item technique-focused clips with mostly consistent form,
+    \item mixed clips containing alternating correct and incorrect attempts,
+    \item longer sequences with variation in tempo, stance side, and execution quality.
+\end{itemize}
+
+This design allowed analysis of both controlled and unconstrained behavior.
+
+\subsubsection{Observed Runtime Behavior}
+
+Across runs, the system demonstrated the following patterns:
+
+\begin{itemize}
+    \item \textbf{score responsiveness}: score curves reacted to visible form/timing changes,
+    \item \textbf{angle adaptation}: best-match angle switched when viewpoint/form alignment changed,
+    \item \textbf{mirror robustness}: mirrored execution variants were handled without manual relabeling,
+    \item \textbf{feedback coupling}: low-score intervals activated corrective visual/text guidance as intended.
+\end{itemize}
+
+\subsubsection{Strengths Identified in Video Evaluation}
+
+The trainer performed best when:
+
+\begin{itemize}
+    \item references for the target technique-angle were high quality and diverse,
+    \item subject remained fully visible with stable keypoint tracking,
+    \item motion windows contained complete action phases.
+\end{itemize}
+
+In these conditions, score trends were stable and qualitative feedback aligned with visible execution quality.
+
+\subsubsection{Failure Cases and Edge Conditions}
+
+Common failure cases observed during video testing included:
+
+\begin{itemize}
+    \item lower scores on technically acceptable attempts when reference timing was weak,
+    \item abrupt score drops during brief tracking degradation or occlusion,
+    \item angle-match instability in borderline-quality windows,
+    \item sensitivity to long source disruptions in online-streamed videos.
+\end{itemize}
+
+These outcomes were consistent with the reference quality and runtime stability bottlenecks identified earlier.
+
+\subsubsection{Interpretation}
+
+The video-based evaluation indicates that the trainer is functionally effective as a coaching aid: it distinguishes stronger and weaker attempts, provides real-time corrective context, and exposes metric-level diagnostics for analysis. At the same time, performance remains dependent on reference curation quality and capture stability, reinforcing the need for ongoing library refinement and threshold calibration.
+
+\subsubsection{Evaluation Value for Thesis Objectives}
+
+From a thesis perspective, these experiments validate the feasibility of a template-driven coaching pipeline without large supervised datasets. The results also provide a clear evidence base for discussing limitations and future improvements in later sections.
+
+\subsection{Quantitative Results}
+
+This subsection summarizes measurable outcomes from trainer runs and reference collection sessions. The reported values are intended to characterize system behavior under current reference quality and threshold settings, rather than to claim final benchmark performance.
+
+\subsubsection{Evaluation Metrics}
+
+Quantitative analysis used the following runtime outputs:
+
+\begin{itemize}
+    \item fused score \(S \in [0,100]\),
+    \item component scores/distances (cosine, DTW, angle, pose distance),
+    \item binary decision relative to threshold \(\tau\),
+    \item matched angle and mirror-selection frequency,
+    \item per-run window count and score distribution statistics.
+\end{itemize}
+
+\subsubsection{Reference Collection Throughput}
+
+Batch collection logs showed measurable curation progress:
+
+\begin{itemize}
+    \item multiple technique-angle jobs processed in unattended mode,
+    \item successful generation of new reference samples during overnight runs,
+    \item zero hard processing failures in the reviewed run segment, with interruption caused by manual stop rather than pipeline crash.
+\end{itemize}
+
+This indicates that the collection pipeline is operationally stable for long-duration execution.
+
+\subsubsection{Example Runtime Score Profile}
+
+In a representative front-kick test run on a long-form input video, the system produced a low-to-moderate score regime under the current reference set, with approximately:
+
+\begin{itemize}
+    \item mean score: \(48.77\),
+    \item maximum score: \(55.77\),
+    \item windows above default threshold (\(\tau=70\)): \(0\).
+\end{itemize}
+
+This profile is consistent with the identified reference-quality bottleneck for kick templates and supports the need for stricter recapture/curation in those classes.
+
+\subsubsection{Distribution-Level Observations}
+
+Across evaluated runs, quantitative traces showed:
+
+\begin{itemize}
+    \item score variance aligned with visible form and timing changes,
+    \item sensitivity of decision outcomes to threshold placement,
+    \item improved stability when matched-angle switching remained consistent over adjacent windows.
+\end{itemize}
+
+These trends support the use of short-horizon temporal smoothing in analysis (session trend interpretation) instead of relying on isolated window decisions.
+
+\subsubsection{Suggested Result Tables for Final Thesis}
+
+For final reporting, include at least two compact tables:
+
+\begin{itemize}
+    \item \textbf{Table A (per-technique summary):} mean score, std, max, pass-rate (\(S \ge \tau\)), number of windows.
+    \item \textbf{Table B (component diagnostics):} average cosine, DTW-derived score, angle score, and pose-distance score for correct vs incorrect segments.
+\end{itemize}
+
+A recommended format is shown below.
+
+\begin{table}[h]
+\centering
+\caption{Per-technique quantitative summary (example structure).}
+\begin{tabular}{lccccc}
+\hline
+Technique & Windows & Mean \(S\) & Std \(S\) & Max \(S\) & Pass-rate (\%) \\
+\hline
+Jab & -- & -- & -- & -- & -- \\
+Cross & -- & -- & -- & -- & -- \\
+Front Kick & 412 & 48.77 & -- & 55.77 & 0.0 \\
+Side Kick & -- & -- & -- & -- & -- \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection{Interpretation}
+
+Quantitatively, the system already provides stable metric traces and decision outputs suitable for comparative analysis. However, the current results also show that reference quality and per-technique threshold calibration are the dominant drivers of final pass-rate performance. Therefore, score improvements are expected to come primarily from reference refinement and evaluation protocol tuning rather than major architectural changes.
+
+\subsection{Qualitative Feedback and User Experience}
+
+In addition to metric-level evaluation, qualitative assessment was used to examine how useful and understandable the trainer is during real practice. The focus was on whether users can interpret outputs quickly, apply corrections in subsequent attempts, and maintain training flow without excessive interface friction.
+
+\subsubsection{Evaluation Focus}
+
+Qualitative review considered three dimensions:
+
+\begin{itemize}
+    \item \textbf{Interpretability}: clarity of score, matched-angle context, and corrective advice.
+    \item \textbf{Actionability}: whether feedback can be translated into immediate movement adjustment.
+    \item \textbf{Usability}: visual readability and cognitive load during continuous execution.
+\end{itemize}
+
+\subsubsection{Observed Strengths}
+
+Practical testing indicated several strengths of the current interface:
+
+\begin{itemize}
+    \item the compact status panel provides fast situational awareness (technique, score, threshold state),
+    \item ghost target overlay helps users understand desired body configuration without external instruction,
+    \item short rule-based feedback messages are easier to apply than long descriptive text,
+    \item iterative loop behavior (attempt, observe, adjust) is naturally supported.
+\end{itemize}
+
+These features made the system effective as a coaching aid rather than only a passive evaluator.
+
+\subsubsection{Observed Friction Points}
+
+Qualitative review also identified user-experience bottlenecks:
+
+\begin{itemize}
+    \item dense correction visuals can create clutter during high-speed motion,
+    \item unstable tracking intervals reduce confidence in immediate feedback,
+    \item low reference quality in some techniques can produce feedback that appears inconsistent with user perception,
+    \item binary threshold boundaries may feel strict in borderline cases without trend context.
+\end{itemize}
+
+These issues are consistent with the quantitative and reference-quality findings.
+
+\subsubsection{UI/UX Adaptation Outcome}
+
+A key usability adjustment was reducing overlay clutter and prioritizing clearer ghost-pose guidance with concise text cues. This improved readability in live runs and reduced distraction during execution, especially for techniques with rapid limb movement.
+
+\subsubsection{Practical Training Value}
+
+From a training perspective, the system provides meaningful self-practice support by combining:
+
+\begin{itemize}
+    \item immediate score feedback,
+    \item visual target alignment,
+    \item short correction prompts.
+\end{itemize}
+
+Users can identify whether they are converging toward acceptable form over repeated attempts, which increases perceived usefulness even when absolute scores are not yet optimal.
+
+\subsubsection{Implications for Further Development}
+
+Qualitative findings suggest that future improvements should prioritize:
+
+\begin{itemize}
+    \item reference quality refinement for feedback consistency,
+    \item adaptive feedback intensity based on confidence/trend stability,
+    \item optional session-level summaries to complement per-window decisions.
+\end{itemize}
+
+Overall, the user experience is already functional and demonstrably helpful, with clear paths to improve coaching smoothness and trust calibration.
+
+\section{Discussion}
+\subsection{Strengths and Limitations}
+
+This project demonstrates that a reference-based coaching pipeline can provide meaningful martial arts feedback without requiring large supervised datasets. The system is operational end-to-end, supports multi-technique evaluation, and produces interpretable outputs that are directly usable in practice sessions. At the same time, the experiments reveal clear technical constraints that define the current performance ceiling.
+
+\subsubsection{Strengths}
+
+\paragraph{Interpretability}
+A major strength is score transparency. The final decision is not a black-box class label but a fusion of geometric, temporal, and kinematic components. This makes results explainable for both users and supervisors and supports targeted troubleshooting.
+
+\paragraph{Actionable Coaching Output}
+The combination of compact status display, short rule-based feedback, and ghost target visualization enables a practical correction loop. Users can quickly identify mismatch direction and attempt immediate adjustment in subsequent attempts.
+
+\paragraph{Low Data Dependency}
+Compared with fully supervised approaches, the reference-template strategy requires substantially less annotation effort. This is particularly valuable in domain-specific martial arts settings where large high-quality labeled datasets are difficult to obtain.
+
+\paragraph{Modular and Extensible Engineering}
+The software architecture separates capture, scoring, feedback, and evaluation workflows. This modularity improves maintainability, enables incremental upgrades, and supports reproducible experimentation.
+
+\paragraph{Practical Deployment Feasibility}
+The system runs on commodity CPU hardware and supports webcam/local video workflows, making it suitable for accessible self-practice scenarios without specialized infrastructure.
+
+\subsubsection{Limitations}
+
+\paragraph{Reference Quality Sensitivity}
+The strongest limitation is dependence on reference quality. Mistimed, static, or noisy templates can degrade scoring reliability and feedback correctness. Reference curation therefore remains a continuous requirement rather than a one-time setup.
+
+\paragraph{Coverage and Diversity Constraints}
+Performance depends on technique-angle coverage and variability in stored examples. Limited performer diversity or viewpoint diversity reduces robustness when testing on unseen motion styles or recording conditions.
+
+\paragraph{Tracking and Detection Fragility}
+Fast motion, occlusion, and suboptimal video quality can produce unstable keypoints. This can cause transient score drops, matched-angle switching, and inconsistent corrective cues even when user execution quality is relatively stable.
+
+\paragraph{Threshold Calibration Challenge}
+A single global threshold is convenient but not optimal for all techniques. Different actions produce different score distributions, so per-technique calibration is needed for balanced false positive/false negative behavior.
+
+\paragraph{Computational Throughput}
+CPU-only processing is sufficient for demonstration but limits experimentation speed at scale, especially for large reference-capture batches and repeated evaluation sweeps.
+
+\subsubsection{Overall Interpretation}
+
+The current system is best characterized as a functional and interpretable coaching prototype with strong practical potential. Its main value lies in explainable feedback and low-data operation, while its main risks are reference governance and robustness under real-world variability. These findings motivate future work on reference protocol standardization, threshold calibration, and runtime stability improvements.
+
+\subsection{Bottlenecks and Failure Cases}
+
+This subsection summarizes the dominant bottlenecks observed during development and evaluation, and describes representative failure modes that limit current system performance. Identifying these constraints is important for interpreting results and prioritizing future improvements.
+
+\subsubsection{Reference Quality Bottleneck}
+
+The most critical bottleneck is reference quality at capture time. If templates are static, mistimed, or partially corrupted, the best-match stage can produce low-confidence or misleading matches even when user execution is reasonable. This propagates directly into lower fused scores and less reliable correction guidance.
+
+\textbf{Failure case:} a technically acceptable kick receives persistently low scores because the stored reference does not capture the true peak-extension phase.
+
+\subsubsection{Coverage and Diversity Bottleneck}
+
+Limited diversity across performers, camera setups, and execution styles reduces generalization. A narrow reference set can bias matching toward specific body proportions or motion tempo, leading to degraded robustness on unseen users.
+
+\textbf{Failure case:} a valid execution from a different stance rhythm or body type is penalized due to insufficiently diverse template examples.
+
+\subsubsection{Pose Tracking Stability Bottleneck}
+
+Fast limb motion, motion blur, occlusion, and non-ideal lighting can destabilize keypoint extraction. Since scoring uses sequence geometry, short tracking failures can cause abrupt metric degradation.
+
+\textbf{Failure case:} transient wrist/ankle loss produces sharp score drops and temporary misclassification despite otherwise consistent movement.
+
+\subsubsection{Temporal Windowing and Phase Sensitivity}
+
+Window-based evaluation can be sensitive to where the action phase falls within the sampled segment. If the active window misses critical extension/recovery structure, metric values may not reflect the true quality of the full attempt.
+
+\textbf{Failure case:} a good strike is evaluated on a partial transition window, generating a borderline or failing score.
+
+\subsubsection{Threshold Calibration Bottleneck}
+
+Using one global threshold simplifies operation but does not fit all techniques equally. Different actions naturally produce different score distributions, which can cause imbalanced false positives/false negatives across classes.
+
+\textbf{Failure case:} threshold tuned for punches over-penalizes kicks, reducing practical acceptance rates for lower-body techniques.
+
+\subsubsection{Viewpoint and Angle Ambiguity}
+
+Although multi-angle matching improves robustness, some viewpoint transitions still produce unstable angle selection across adjacent windows. This can reduce interpretability and create noisy feedback transitions.
+
+\textbf{Failure case:} matched-angle label oscillates near class boundaries, causing inconsistent coaching context frame-to-frame.
+
+\subsubsection{Source Reliability Bottleneck}
+
+Online video sources can introduce stream interruptions and incomplete reads, which break long evaluation runs and reduce experiment reproducibility.
+
+\textbf{Failure case:} long-form run terminates early due to source truncation errors, yielding partial metrics and incomplete comparisons.
+
+\subsubsection{Compute Throughput Bottleneck}
+
+CPU-only processing is sufficient for demonstration but slows large batch collection and iterative parameter sweeps. This limits the speed of reference refinement and threshold calibration cycles.
+
+\textbf{Failure case:} overnight runs remain incomplete or require multiple sessions to reach target reference coverage.
+
+\subsubsection{Summary of Failure Pattern}
+
+Most observed failures are systematic rather than random and follow a clear dependency chain:
+
+\[
+\text{Reference quality + tracking stability} \rightarrow \text{metric reliability} \rightarrow \text{decision stability} \rightarrow \text{feedback usefulness}
+\]
+
+This indicates that improving capture governance, template coverage, and stability controls is likely to yield the largest practical gains in system reliability.
+
+\subsection{Potential Improvements}
+
+Based on the observed bottlenecks and evaluation outcomes, several improvements can significantly increase system reliability, coaching value, and research depth. The recommended direction is incremental enhancement rather than architectural replacement, preserving the current interpretable template-driven foundation.
+
+\subsubsection{Reference Governance and Curation}
+
+The highest-impact improvement is to formalize reference quality control:
+
+\begin{itemize}
+    \item define stricter technique-specific acceptance thresholds,
+    \item require minimum validated examples per technique-angle pair,
+    \item introduce periodic library audits and recapture cycles,
+    \item maintain a small manually verified gold-standard subset for calibration.
+\end{itemize}
+
+This directly targets the dominant quality bottleneck in downstream scoring.
+
+\subsubsection{Per-Technique Threshold Calibration}
+
+Replace a single global threshold with calibrated per-technique thresholds derived from validation sets containing correct and incorrect examples. This can reduce class-dependent bias and improve decision consistency across punches and kicks.
+
+\subsubsection{Temporal Decision Smoothing}
+
+Introduce short-horizon decision smoothing (e.g., rolling score confidence) to reduce sensitivity to transient tracking noise. This would improve perceived stability in live coaching and reduce oscillation around threshold boundaries.
+
+\subsubsection{Adaptive Feedback Policy}
+
+Upgrade feedback from fixed rule triggering to confidence-aware/adaptive feedback intensity:
+
+\begin{itemize}
+    \item stronger cues during sustained low-confidence periods,
+    \item lighter guidance near threshold,
+    \item session-level summary prompts after repeated error patterns.
+\end{itemize}
+
+This can improve user trust and reduce feedback fatigue.
+
+\subsubsection{Reference Retrieval Enhancements}
+
+Beyond pure max-score selection, a lightweight reranking stage could be added (e.g., quality-weighted candidate selection or ensemble top-\(k\) consensus) to reduce angle jitter and improve best-match stability in ambiguous windows.
+
+\subsubsection{Data Diversity Expansion}
+
+Improve generalization by increasing performer diversity, camera setups, and controlled recording conditions. A broader reference base should reduce mismatch bias on unseen users and movement styles.
+
+\subsubsection{Runtime Robustness Improvements}
+
+To reduce failure from unstable sources and tracking interruptions:
+
+\begin{itemize}
+    \item prioritize local pre-downloaded videos for benchmark runs,
+    \item add stronger handling for temporary keypoint dropouts,
+    \item implement source-health checks for long-duration runs.
+\end{itemize}
+
+\subsubsection{Performance and Throughput Scaling}
+
+Introduce GPU-backed execution for larger-scale reference capture and hyperparameter sweeps. Faster iteration would enable more rigorous calibration and wider evaluation coverage within practical project timelines.
+
+\subsubsection{Evaluation Protocol Formalization}
+
+Define a standardized validation protocol with fixed splits, reporting templates, and technique-wise metrics. This would improve reproducibility and make future comparisons against learning-based baselines more rigorous.
+
+\subsubsection{Hybrid Extension Path}
+
+A practical long-term direction is a hybrid architecture where template matching remains the interpretable decision core, while learning-based modules support auxiliary tasks such as threshold prediction, error-type classification, or reference quality estimation. This preserves transparency while improving robustness.
+
+\section{Conclusion and Future Work}
+\subsection{Summary of Contributions}
+
+This thesis presented the design, implementation, and evaluation of a reference-based martial arts coaching system using pose estimation and template matching. The project demonstrates that practical and interpretable technique assessment can be achieved without relying on large-scale supervised training pipelines.
+
+The main contributions are summarized as follows:
+
+\begin{itemize}
+    \item \textbf{End-to-end coaching pipeline}: Developed a complete workflow from reference capture to runtime scoring and visual feedback.
+    \item \textbf{Structured reference methodology}: Established a plan-driven, quality-gated process for building and maintaining a multi-technique, multi-angle reference library.
+    \item \textbf{Robust preprocessing strategy}: Implemented confidence-aware normalization, temporal resampling, and mirror handling to improve cross-user and cross-viewpoint comparability.
+    \item \textbf{Interpretable multi-metric scoring}: Designed a fused scoring framework combining cosine similarity, DTW alignment, technique-specific angle error, and mean pose distance.
+    \item \textbf{Best-match and decision framework}: Implemented angle-aware best-reference selection and threshold-based correctness logic suitable for real-time coaching usage.
+    \item \textbf{Actionable feedback interface}: Integrated concise textual coaching cues with contextual visual guidance through ghost target overlays.
+    \item \textbf{Experimentation and analysis}: Conducted quantitative and qualitative evaluations that identified practical strengths, dominant bottlenecks, and failure modes.
+\end{itemize}
+
+Beyond technical implementation, the project contributes an engineering methodology for interpretable motion coaching systems: prioritize reference governance, preserve metric transparency, and couple scoring outputs to correction-oriented user feedback. The findings show that while performance remains bounded by reference quality and runtime stability, the proposed approach is functional, extensible, and suitable as a foundation for future hybrid or learning-augmented development.
+
+\subsection{Future Directions}
+
+The current system provides a functional and interpretable foundation for martial arts coaching, but several research and engineering directions can significantly improve reliability, scalability, and coaching quality.
+
+\subsubsection{Reference Quality Standardization}
+
+Future work should formalize a stricter reference curation protocol with technique-specific acceptance criteria, peak-action timing guidelines, and periodic quality audits. A small expert-validated benchmark subset can be used as a calibration anchor to reduce reference drift over time.
+
+\subsubsection{Per-Technique Calibration}
+
+A key next step is replacing the global decision threshold with per-technique calibrated thresholds derived from validation data. This is expected to reduce false negatives for high-variance techniques (especially kicks) and improve consistency across classes.
+
+\subsubsection{Session-Level Decision Modeling}
+
+Current evaluation is window-based. Future versions should incorporate short-horizon temporal smoothing and session-level summaries to improve decision stability and provide more meaningful training feedback over complete repetitions.
+
+\subsubsection{Expanded Data Diversity}
+
+To improve generalization, the reference library should be expanded with broader performer diversity, camera configurations, and controlled recording conditions. This would reduce viewpoint and style bias and improve robustness on unseen users.
+
+\subsubsection{Hybrid Scoring Extensions}
+
+A promising direction is a hybrid architecture that preserves interpretable template matching while adding lightweight learned modules for reranking, confidence estimation, or error-type prediction. This can improve robustness without sacrificing explainability.
+
+\subsubsection{Robustness and Throughput Upgrades}
+
+Operational improvements should include local dataset mirroring for stable long runs, stronger handling of temporary keypoint dropouts, and GPU-enabled batch processing for faster iteration during large-scale capture and evaluation.
+
+\subsubsection{Evaluation Protocol Formalization}
+
+Future research should establish a fixed benchmark protocol with predefined splits, consistent metrics, and ablation studies (metric weights, gate thresholds, mirror handling). This would support rigorous comparison with deep learning baselines and improve reproducibility.
+
+\subsubsection{User-Facing Coaching Enhancements}
+
+The feedback interface can be extended with adaptive coaching modes (beginner/intermediate/advanced), progress tracking dashboards, and personalized correction history. These features would shift the system from frame-level guidance toward long-term skill development support.
+
+Overall, the future direction is not to replace the current system, but to evolve it into a robust hybrid coaching platform that combines interpretability, empirical rigor, and practical usability.
+
+\section*{References}
+
+\bibliographystyle{ieeetr}
+\bibliography{references}
+
+\appendix
+\section{Appendix}
+
+\subsection{Sample Code Listings}
+
+\begin{lstlisting}[language=Python, caption={Example: Pose Normalization Function}]
+import numpy as np
+
+def normalize_pose_frame(frame_kpts, conf_thresh=0.2):
+    """
+    frame_kpts: (K,2) or (K,3) where [:,2] is confidence if present.
+    returns: normalized (K,2) pose in body-centered coordinates.
+    """
+    xy = frame_kpts[:, :2].astype(np.float32)
+    conf = frame_kpts[:, 2] if frame_kpts.shape[1] >= 3 else np.ones((xy.shape[0],), dtype=np.float32)
+
+    # Mask low-confidence points
+    valid = np.isfinite(xy).all(axis=1) & np.isfinite(conf) & (conf >= conf_thresh)
+    xy_norm = xy.copy()
+    xy_norm[~valid] = np.nan
+
+    # Hip-center anchor (fallback to mean valid point)
+    if valid.shape[0] > 12 and valid[11] and valid[12]:
+        center = (xy_norm[11] + xy_norm[12]) / 2.0
+    elif valid.any():
+        center = np.nanmean(xy_norm[valid], axis=0)
+    else:
+        return np.zeros_like(xy, dtype=np.float32)
+
+    xy_norm = xy_norm - center
+
+    # Shoulder-width scale (fallback to 1.0)
+    scale = 1.0
+    if valid.shape[0] > 6 and valid[5] and valid[6]:
+        scale = float(np.linalg.norm(xy_norm[5] - xy_norm[6]))
+    if not np.isfinite(scale) or scale < 1e-6:
+        scale = 1.0
+
+    xy_norm = xy_norm / scale
+    return xy_norm.astype(np.float32)
+\end{lstlisting}
+
+\subsection{Additional Figures}
+
+Relevant figures for the final report include:
+\begin{itemize}
+    \item Full pipeline diagram (input, pose extraction, normalization, matching, feedback).
+    \item Reference capture workflow (plan CSV, quality gates, saved references).
+    \item Runtime UI screenshot (score panel + ghost target overlay).
+    \item Example score timeline from a test video.
+    \item Failure-case examples (occlusion, mistimed reference, angle mismatch).
+\end{itemize}
+
+\subsection{Command-Line Usage Examples}
+
+\begin{verbatim}
+# Run trainer on local test video
+python action_recognition.py --source MultipleTest.MOV --target-technique jab --reference-dir reference_poses --output-path output_jab.mp4
+
+# Run trainer on webcam
+python action_recognition.py --source 0 --target-technique front_kick --reference-dir reference_poses
+
+# Collect references in batch
+python run_reference_collection_batch.py
+
+# Dry-run/preflight only
+python run_reference_collection_batch.py --preflight-only
+
+# Visualize reference quality
+python visualize_reference_pose.py --technique front_kick --angle right45
+\end{verbatim}
+
+\subsection{Reference Plan CSV Example}
+
+\begin{verbatim}
+technique_label,angle_label,command_ready,source_url_1,source_url_2,source_url_3,source_url_4
+jab,front,yes,https://...,https://...,https://...,https://...
+front_kick,right45,yes,https://...,https://...,https://...,https://...
+side_kick,left45,no,https://...,https://...,,
+\end{verbatim}
+
+\subsection{Notes on Reproducibility}
+
+\begin{itemize}
+    \item Fix the reference library snapshot before final experiments.
+    \item Record threshold settings and run configuration for each result table.
+    \item Prefer local video files over unstable streaming URLs for benchmark runs.
+\end{itemize}
+
+}
+
+\end{document}
+
