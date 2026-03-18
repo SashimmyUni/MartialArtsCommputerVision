@@ -1,0 +1,8 @@
+{
+  "technique": "jab",
+  "reference_file": "reference_poses\\jab.npy",
+  "source": "https://rr2---sn-4g5ednre.googlevideo.com/videoplayback?expire=1773532154&ei=mp-1aZKPFreH6dsPtt712Qw&ip=147.161.154.83&id=o-AHPTEgrx3gCGeVG9R7NHMSKO73OuGxpRs3OMYJQzMEoG&itag=137&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&cps=431&met=1773510554%2C&mh=El&mm=31%2C26&mn=sn-4g5ednre%2Csn-1giz7n7l&ms=au%2Conr&mv=m&mvi=2&pl=23&rms=au%2Cau&initcwndbps=3545000&bui=AVNa5-w84f0lGiT59cCDflGvWCh4HtPZ6Knx0oMnYjgjcvpWNn012WkYm2X7jfR0JkSXjUZA5AEoIxhy&spc=6dlaFEMB7WK6pWUnllozmo89tabmWFlI9m6SS9f9cWUEmeVg&vprv=1&svpuc=1&mime=video%2Fmp4&rqh=1&gir=yes&clen=38569717&dur=180.813&lmt=1741517882547532&mt=1773510099&fvip=1&keepalive=yes&fexp=51565115%2C51565682%2C51791334&c=ANDROID_VR&txp=5432534&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cbui%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AHEqNM4wRQIhAPubsNd6a3g-NgDhwpKjiFbygqIIC95BXsN93wTffGv-AiAh108YkVTaQ7pnkCIpQPZ3r0-0mYpGa3whGlay2zzzsA%3D%3D&lsparams=cps%2Cmet%2Cmh%2Cmm%2Cmn%2Cms%2Cmv%2Cmvi%2Cpl%2Crms%2Cinitcwndbps&lsig=APaTxxMwRQIhAPWWno39My57nTD1nMy1iIuN3LzRm2mUnyX5vZhl-WoXAiA_ZPWUC7el73rZSzcbuJegc_tZ1uijj7wZrv1PqTINOw%3D%3D",
+  "num_frames": 12,
+  "keypoint_format": "COCO17",
+  "created_at": "2026-03-14T17:49:18.581680Z"
+}

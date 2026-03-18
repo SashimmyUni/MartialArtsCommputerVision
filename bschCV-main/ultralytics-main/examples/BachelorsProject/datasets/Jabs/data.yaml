@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 6
+names: ['bag', 'cross', 'hook', 'jab', 'no punch', 'uppercut']
+
+roboflow:
+  workspace: boxinghub
+  project: boxinghub
+  version: 3
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/boxinghub/boxinghub/dataset/3
