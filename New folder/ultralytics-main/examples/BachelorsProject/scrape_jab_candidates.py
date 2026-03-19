@@ -320,7 +320,7 @@ def main() -> int:
         final_rows.append(
             {
                 "technique": args.technique,
-                "angle": "",  # fill manually: front, left45, right45, side
+                "angle": "",  # fill manually: front, left45, right45, side, side_right, side_left, behind
                 "stance": "",  # fill manually: orthodox, southpaw
                 "quality": "",  # fill manually: good, ok, bad
                 "keep": "",  # fill manually: yes/no

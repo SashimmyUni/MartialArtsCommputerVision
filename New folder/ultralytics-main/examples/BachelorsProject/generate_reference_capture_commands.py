@@ -156,6 +156,12 @@ def _suggest_view_bucket(row: dict[str, str]) -> str:
         return "right45"
     if any(token in text for token in ("footwork", "pivot", "stance", "body", "mechanics", "step", "hip")):
         return "lead_side"
+    if any(token in text for token in ("behind", "from behind", "rear view", "back view")):
+        return "behind"
+    if any(token in text for token in ("right side", "right profile", "side right", "from right")):
+        return "side_right"
+    if any(token in text for token in ("left side", "left profile", "side left", "from left")):
+        return "side_left"
     return "front"
 
 

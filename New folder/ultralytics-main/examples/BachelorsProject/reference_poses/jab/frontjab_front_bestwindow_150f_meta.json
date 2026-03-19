@@ -1,8 +1,0 @@
-{
-  "technique": "jab__frontjab_front_bestwindow_150f",
-  "reference_file": "reference_poses\\jab\\frontjab_front_bestwindow_150f.npy",
-  "source": "reference_poses/Golden_Seeds/jab/FrontJab_Front.MOV",
-  "num_frames": 150,
-  "keypoint_format": "COCO17",
-  "created_at": "2026-03-17T14:40:58.643625+00:00"
-}

@@ -28,7 +28,7 @@ python action_recognition.py --source 0 --target-technique jab --reference-dir r
 ## 4) Webcam trainer
 
 ```powershell
-python action_recognition.py --source 0 --target-technique jab --reference-dir reference_poses
+python action_recognition.py --source "MultipleJabs.mp4" --target-technique jab --reference-dir reference_poses
 ```
 
 ## 5) Manual reference capture (best window)
@@ -99,13 +99,33 @@ Dry run only:
 python run_reference_collection_batch.py --preflight-only
 ```
 
-## 10) Jab seed-gated batch helper script
+## 10) Run all Golden Seeds files for one technique (auto-indexed)
+
+Dry run first:
+
+```powershell
+python run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance --dry-run
+```
+
+Run capture:
+
+```powershell
+python run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance
+```
+
+Example for AxeKick:
+
+```powershell
+python run_golden_seed_technique.py --technique-key axe_kick --golden-technique-dir AxeKick
+```
+
+## 11) Jab seed-gated batch helper script
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\run_jab_seed_batch.ps1 -ExamplesPerAngle 2 -NumVideoSequenceSamples 150 -RefMinScoreGate 55 -ReferenceSearchMaxFrames 260
 ```
 
-## 11) Useful output locations
+## 12) Useful output locations
 
 - Main trainer output video: `output_demo.mp4`
 - Pose-only video (if enabled): `datasets/pose_video.mp4`

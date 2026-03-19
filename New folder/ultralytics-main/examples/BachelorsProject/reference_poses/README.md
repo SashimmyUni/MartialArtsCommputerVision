@@ -21,6 +21,9 @@ Recommended angle names:
 - `left45`
 - `right45`
 - `side`
+- `side_right`
+- `side_left`
+- `behind`
 
 Technique folder names should use snake_case:
 

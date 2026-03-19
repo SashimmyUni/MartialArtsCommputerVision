@@ -40,6 +40,8 @@ Important files and folders:
   - Renders saved `.npy` references into preview videos for quality inspection.
 - `generate_reference_capture_commands.py`
   - Builds capture command plans from candidate sources.
+- `run_golden_seed_technique.py`
+  - Runs all local Golden Seeds files for one technique and saves indexed references automatically.
 - `reference_poses/`
   - Canonical reference library and plan files.
 - `reference_poses/generated_capture_plan_all_labels.csv`
@@ -135,6 +137,18 @@ Purpose:
 ---
 
 ## 5. Data Collection Workflow (Reference Capture)
+
+## 5.0 Golden Seeds folder-first collection (fast local workflow)
+
+Use this when you already have local curated clips under `reference_poses/Golden_Seeds/<TechniqueName>/`.
+
+1. Put clips in one folder per technique (example: `reference_poses/Golden_Seeds/FightingStance/`).
+2. Run the per-technique batch script:
+  - `python run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance --dry-run`
+  - `python run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance`
+3. The script infers angle from each file name and saves outputs to `reference_poses/fighting_stance/` as indexed files:
+  - `front_01.npy`, `front_02.npy`, `left45_01.npy`, `behind_01.npy`, etc.
+4. Inspect results with `visualize_reference_pose.py` and re-run with `--overwrite` if needed.
 
 ## 5.1 Plan-driven collection
 
