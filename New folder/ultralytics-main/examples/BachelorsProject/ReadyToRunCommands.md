@@ -28,7 +28,7 @@ python action_recognition.py --source 0 --target-technique jab --reference-dir r
 ## 4) Webcam trainer
 
 ```powershell
-python action_recognition.py --source "MultipleJabs.mp4" --target-technique jab --reference-dir reference_poses
+python action_recognition.py --source "InputVideo\FrontKick_Input.mp4" --target-technique FrontKick --reference-dir reference_poses
 ```
 
 ## 5) Manual reference capture (best window)
@@ -125,7 +125,113 @@ python run_golden_seed_technique.py --technique-key axe_kick --golden-technique-
 powershell -ExecutionPolicy Bypass -File .\run_jab_seed_batch.ps1 -ExamplesPerAngle 2 -NumVideoSequenceSamples 150 -RefMinScoreGate 55 -ReferenceSearchMaxFrames 260
 ```
 
-## 12) Useful output locations
+## 12) GOLDEN SEEDS YOUTUBE SCOUT (NEW!)
+
+Scout YouTube videos using Golden Seeds as templates. The scout uses the camera angles and variations in your Golden_Seeds folder to automatically search YouTube, find similar technique videos, and populate the batch collection plan.
+
+### Quick Start
+
+Set your YouTube API key:
+```powershell
+$env:YOUTUBE_API_KEY = "AIzaSyB2Llk3RK_nL9a5tIIZrUmtqSueCo2BMPo"
+```
+
+Scout all Golden Seeds techniques/angles:
+```powershell
+python scout_youtube_by_golden_seeds.py --api-key $env:YOUTUBE_API_KEY
+```
+
+Scout just one technique/angle:
+```powershell
+python scout_youtube_by_golden_seeds.py --api-key $env:YOUTUBE_API_KEY --technique jab --angle side_right
+```
+
+Dry run (shows queries without API calls):
+```powershell
+python scout_youtube_by_golden_seeds.py --api-key $env:YOUTUBE_API_KEY --dry-run
+```
+
+### Scout Options
+
+```powershell
+python scout_youtube_by_golden_seeds.py --api-key $env:YOUTUBE_API_KEY `
+  --technique fighting_stance `
+  --max-results-per-query 50 `
+  --max-pages-per-query 2 `
+  --max-candidates-per-angle 4 `
+  --min-view-count 1000 `
+  --order relevance
+```
+
+### Scout Workflow
+
+1. **Scout YouTube**: 
+   ```powershell
+   python scout_youtube_by_golden_seeds.py --api-key $env:YOUTUBE_API_KEY
+   ```
+   - Outputs: `reference_poses/scout_candidates_golden_seeds.csv` (detailed results for review)
+   - Outputs: `reference_poses/scout_batch_plan.csv` (ready for batch collection)
+
+2. **Review candidates** (optional):
+   - Open `reference_poses/scout_candidates_golden_seeds.csv`
+   - Check view counts, definitions, captions
+   - Manually remove low-quality videos if needed
+
+3. **Merge into batch plan**:
+   ```powershell
+   python merge_scout_into_plan.py --scout-plan reference_poses/scout_batch_plan.csv --backup
+   ```
+   - `--backup`: Creates backup of existing plan
+   - `--merge-mode update`: Update existing entries, keep user edits for other entries
+   - `--merge-mode append`: Add scout results to existing plan
+   - `--merge-mode replace`: Completely replace plan with scout results
+
+4. **Run batch collection** (same as #9):
+   ```powershell
+   python run_reference_collection_batch.py
+   ```
+
+### Scout Architecture
+
+The scout system works like this:
+
+1. **Scan Golden Seeds**: Finds all videos in `reference_poses/Golden_Seeds/`
+2. **Infer camera angles**: Filename analysis determines angle (front, side_right, left45, etc.)
+3. **Generate search queries**: For each technique/angle, generates multiple YouTube search queries
+4. **Search YouTube**: Uses YouTube Data API v3 to find matching videos
+5. **Filter candidates**: 
+   - Duration: 10-600 seconds (adjustable)
+   - Views: Minimum 1000 (adjustable)
+   - Quality: Prefers HD and videos with captions
+6. **Rank results**: Sorts by view count (higher confidence)
+7. **Generate CSV**: Creates batch plan entries with top 4 URLs per angle
+
+### Example: Generate Jab References
+
+Scout for jab videos:
+```powershell
+python scout_youtube_by_golden_seeds.py --api-key $env:YOUTUBE_API_KEY --technique jab
+```
+
+This searches for:
+- "boxing jab tutorial front view" (from Golden_Seeds/Jab/FrontJab_Front.MOV)
+- "boxing jab tutorial side_right view" (from Golden_Seeds/Jab/FrontJab_Right.MOV)
+- "how to throw a jab left 45 degree view" (from Golden_Seeds/Jab/FrontJab_45_Left.MOV)
+- ... and more combinations
+
+Merge results:
+```powershell
+python merge_scout_into_plan.py --scout-plan reference_poses/scout_batch_plan.csv --backup
+```
+
+Run batch collection:
+```powershell
+python run_reference_collection_batch.py
+```
+
+New references saved to: `reference_poses/jab/front_01.npy`, `jab/front_02.npy`, etc.
+
+## 13) Useful output locations
 
 - Main trainer output video: `output_demo.mp4`
 - Pose-only video (if enabled): `datasets/pose_video.mp4`
