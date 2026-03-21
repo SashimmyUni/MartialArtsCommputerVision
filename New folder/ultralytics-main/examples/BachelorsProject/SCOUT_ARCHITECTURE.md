@@ -125,12 +125,12 @@ Found 13 martial arts techniques:
 ✓ axekick (6 angles)
 ✓ cross (6 angles)
 ✓ elbow (6 angles)
-✓ fightingstance (7 angles)
-✓ frontkick (5 angles)
+✓ fighting_stance (7 angles)
+✓ front_kick (5 angles)
 ✓ hook (6 angles)
 ✓ jab (4+ angles)
-✓ kneekick (5 angles)
-✓ roundhousekick (5 angles)
+✓ knee_strike (5 angles)
+✓ roundhouse_kick (5 angles)
 ✓ uppercut (6 angles)
 + other techniques
 ```
@@ -138,13 +138,13 @@ Found 13 martial arts techniques:
 Each technique can be scouted independently for YouTube videos:
 ```powershell
 python scout_youtube_by_golden_seeds.py --api-key KEY --technique jab
-python scout_youtube_by_golden_seeds.py --api-key KEY --technique roundhousekick
+python scout_youtube_by_golden_seeds.py --api-key KEY --technique roundhouse_kick
 python scout_youtube_by_golden_seeds.py --api-key KEY  # All techniques
 ```
 
 ## Usage Example: Scout One Technique
 
-### 1. Get GitHub API Key
+### 1. Get YouTube API Key
 
 - Visit [Google Cloud Console](https://console.cloud.google.com/)
 - Create project → Enable YouTube Data API v3 → Create credentials

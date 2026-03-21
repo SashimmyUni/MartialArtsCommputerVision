@@ -18,6 +18,16 @@ from typing import Any
 import numpy as np
 
 
+def normalize_technique_key(text: str) -> str:
+    """Normalize technique names to canonical snake_case keys.
+
+    Handles PascalCase, kebab-case, spaced names, and existing snake_case.
+    """
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", (text or "").strip())
+    normalized = normalized.replace("-", " ").replace("_", " ")
+    return "_".join(normalized.lower().split())
+
+
 def infer_angle_from_filename(file_name: str) -> str | None:
     """Infer viewing angle from filename pattern (same logic as in run_golden_seed_technique.py).
     
@@ -140,7 +150,7 @@ def generate_search_queries(technique: str, angle: str, num_queries: int = 5) ->
     Returns:
         List of YouTube search query strings
     """
-    technique_lower = technique.lower().replace("_", " ")
+    technique_lower = normalize_technique_key(technique).replace("_", " ")
     angle_desc = angle_to_camera_description(angle)
     
     templates = TECHNIQUE_SEARCH_TEMPLATES.get(technique_lower, [])
@@ -176,7 +186,7 @@ def inventory_golden_seeds(golden_seeds_dir: Path) -> dict[str, dict[str, list[P
         if not technique_dir.is_dir():
             continue
         
-        technique = technique_dir.name.lower().replace("_", " ")
+        technique = normalize_technique_key(technique_dir.name)
         inventory.setdefault(technique, {})
         
         for video_file in technique_dir.glob("*"):
@@ -295,14 +305,15 @@ def create_csv_template_row(
     Returns:
         Dictionary matching generated_capture_plan_all_labels.csv column structure
     """
-    target_tech = target_technique_key or technique.lower().replace(" ", "_")
+    normalized_technique = normalize_technique_key(technique)
+    target_tech = normalize_technique_key(target_technique_key or normalized_technique)
     reference_key = f"{target_tech}__{angle}"
     
     # Pad source_urls to 4 columns
     padded_urls = (source_urls + [""] * 4)[:4]
     
     return {
-        "technique": technique,
+        "technique": normalized_technique,
         "angle": angle,
         "reference_key": reference_key,
         "status": "ready",

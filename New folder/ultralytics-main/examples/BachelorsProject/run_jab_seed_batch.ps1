@@ -14,7 +14,9 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectRoot
 
-$python = "c:/Users/Sashi/Documents/Bachelor/Finalbsc/bschCV/.venv/Scripts/python.exe"
+$repoRoot = Resolve-Path (Join-Path $projectRoot "..\..\..\..")
+$venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
+$python = if (Test-Path $venvPython) { $venvPython } else { "python" }
 $planPath = Join-Path $projectRoot "reference_poses/generated_capture_plan_all_labels.csv"
 if (-not (Test-Path $planPath)) {
     throw "Plan file not found: $planPath"

@@ -31,5 +31,5 @@ Technique folder names should use snake_case:
 
 ## Notes
 
-- Existing legacy flat files (for example `front_kick.npy`) were kept for backward compatibility.
-- Current loader logic in the script still expects flat files by default; this folder structure is prepared for the upcoming automatic best-angle matching logic.
+- The active loader supports this nested multi-angle layout directly.
+- Existing legacy flat files (for example `front_kick.npy`) can still be loaded when present, but new captures should be stored under technique folders.

@@ -95,10 +95,10 @@ Technique         | Pose Files | Status
 Jab              | 6          | IN PROGRESS (from scouted videos)
 AxeKick          | 6          | COMPLETED
 Hook             | 6          | COMPLETED
-Fighting_Stance  | 13         | COMPLETED
-FrontKick        | 5          | COMPLETED
-KneeKick         | 5          | COMPLETED
-RoundhouseKick   | 5          | COMPLETED
+fighting_stance  | 13         | COMPLETED
+front_kick       | 5          | COMPLETED
+knee_strike      | 5          | COMPLETED
+roundhouse_kick  | 5          | COMPLETED
 Elbow            | 6          | COMPLETED
 Cross            | 2          | IN PROGRESS
 ```
@@ -205,12 +205,12 @@ reference_poses/
 ├── axekick/*.npy             6 files ✓
 ├── cross/*.npy               2 files ✓
 ├── elbow/*.npy               6 files ✓
-├── fightingstance/*.npy       13 files ✓
-├── frontkick/*.npy           5 files ✓
+├── fighting_stance/*.npy      13 files ✓
+├── front_kick/*.npy           5 files ✓
 ├── hook/*.npy                6 files ✓
 ├── jab/*.npy                 6 files ✓ (from scouted videos)
-├── kneekick/*.npy            5 files ✓
-├── roundhousekick/*.npy      5 files ✓
+├── knee_strike/*.npy          5 files ✓
+├── roundhouse_kick/*.npy      5 files ✓
 └── Golden_Seeds/             (templates)
 ```
 

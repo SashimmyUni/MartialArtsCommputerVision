@@ -168,6 +168,9 @@ During capture, each candidate window must pass:
   - Enforces extension + retraction patterns.
 - Score gate: `ref_min_score_gate`
   - After bootstrap, candidate should still resemble existing references for that technique.
+- Optional Golden Seed variation band: `capture_seed_min_score` + `capture_seed_max_score`
+  - Candidate must stay close enough to the seed bank to remain the same technique,
+    but below the upper bound so it is not accepted as a near-duplicate of the Golden Seed.
 
 Capture mode options:
 
@@ -349,6 +352,17 @@ Run overnight batch:
 ```powershell
 python run_reference_collection_batch.py
 ```
+
+Run batch capture using Golden Seed-derived references as a variation band:
+
+```powershell
+python run_reference_collection_batch.py `
+  --capture-seed-reference-dir reference_poses `
+  --capture-seed-min-score 72 `
+  --capture-seed-max-score 94
+```
+
+Use this after extracting your curated Golden Seeds into `.npy` references. The lower bound keeps new captures aligned with the seed technique, and the upper bound rejects clips that are effectively the same execution again.
 
 Dry-run preflight only:
 

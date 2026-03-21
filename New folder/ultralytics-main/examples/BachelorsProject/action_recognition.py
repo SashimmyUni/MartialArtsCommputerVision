@@ -6,6 +6,7 @@ import argparse
 import csv
 import json
 import math
+import re
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -518,7 +519,9 @@ def _safe_stack_kpt_sequence(seq: list[np.ndarray]) -> np.ndarray | None:
 
 
 def _normalize_key(text: str) -> str:
-    return "_".join((text or "").strip().lower().replace("-", " ").split())
+    normalized = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", (text or "").strip())
+    normalized = normalized.replace("-", " ").replace("_", " ")
+    return "_".join(normalized.lower().split())
 
 
 def _split_reference_key(reference_key: str) -> tuple[str, str | None]:
@@ -1156,16 +1159,44 @@ def _passes_reference_score_gate(
     return score >= min_score, score
 
 
+def _passes_reference_similarity_band(
+    seq: np.ndarray,
+    references: dict[str, dict[str, np.ndarray]],
+    technique: str,
+    min_score: float,
+    max_score: float,
+    bypass_if_missing: bool,
+) -> tuple[bool, float, bool]:
+    """Check whether a candidate falls inside a reference similarity band.
+
+    Returns ``(passes, best_score, has_reference)``.
+    """
+    tkey = _normalize_key(technique)
+    has_reference = tkey in references and bool(references[tkey])
+    if not has_reference:
+        return bypass_if_missing, 0.0, False
+
+    best = _best_reference_match(seq, references[tkey], tkey)
+    if best is None:
+        return False, 0.0, True
+
+    score = float(best[1]["score"])
+    return min_score <= score <= max_score, score, True
+
+
 def _try_record_reference_sequence(
     pose_seq: np.ndarray,
     record_reference: str,
     reference_dir: str,
     references: dict[str, dict[str, np.ndarray]],
+    capture_seed_references: dict[str, dict[str, np.ndarray]],
     source: str,
     frame_counter: int,
     ref_min_motion_energy: float,
     ref_min_return_closure: float,
     ref_min_score_gate: float,
+    capture_seed_min_score: float,
+    capture_seed_max_score: float,
     last_saved_frame: int,
     reference_capture_cooldown_frames: int,
     append_indexed: bool,
@@ -1202,6 +1233,26 @@ def _try_record_reference_sequence(
         )
         return False, last_saved_frame
 
+    passes_seed_gate, seed_score, has_seed_refs = _passes_reference_similarity_band(
+        pose_seq,
+        capture_seed_references,
+        technique_key,
+        capture_seed_min_score,
+        capture_seed_max_score,
+        bypass_if_missing=True,
+    )
+    if not passes_seed_gate:
+        if has_seed_refs:
+            print(
+                f"  [seed gate] skip: score {seed_score:.1f}/100 not in "
+                f"[{capture_seed_min_score:.1f}, {capture_seed_max_score:.1f}] — candidate is either too far from or too close to the seed reference"
+            )
+        else:
+            print(
+                f"  [seed gate] skip: no seed references found for technique '{technique_key}' in capture seed bank"
+            )
+        return False, last_saved_frame
+
     ref_path = save_reference_pose(
         reference_dir,
         record_reference,
@@ -1212,9 +1263,10 @@ def _try_record_reference_sequence(
     _put_reference(refs=references, technique=technique_key, angle=stored_angle, sequence=pose_seq)
 
     gate_text = f"{gate_score:.1f}" if has_existing_refs else "bootstrap"
+    seed_text = f", seed={seed_score:.1f}" if has_seed_refs else ""
     print(
         f"saved reference technique '{record_reference}' to: {ref_path} "
-        f"(motion={energy:.3f}, closure={closure:.3f}, gate={gate_text}, frame={frame_counter})"
+        f"(motion={energy:.3f}, closure={closure:.3f}, gate={gate_text}{seed_text}, frame={frame_counter})"
     )
     if enable_structured_storage:
         _write_reference_meta(
@@ -1716,6 +1768,9 @@ def run(
     ref_min_motion_energy: float = 0.3,
     ref_min_return_closure: float = 0.15,
     ref_min_score_gate: float = 75.0,
+    capture_seed_reference_dir: str | None = None,
+    capture_seed_min_score: float = 0.0,
+    capture_seed_max_score: float = 100.0,
     ref_stance_start_threshold: float = 0.18,
     ref_stance_end_threshold: float = 0.12,
     ref_stance_peak_threshold: float = 0.30,
@@ -1787,6 +1842,13 @@ def run(
             buffer length during reference capture. Effective history length becomes
             ``num_video_sequence_samples * reference_capture_buffer_multiplier``.
             Ignored when not recording references.
+        capture_seed_reference_dir (str, optional): Optional reference directory used
+            only for capture gating. This is useful when Golden Seed references should
+            anchor new captures without forcing the output to overwrite the seed bank.
+        capture_seed_min_score (float): Minimum similarity to the seed bank required
+            before a candidate reference is accepted.
+        capture_seed_max_score (float): Maximum similarity to the seed bank allowed
+            before a candidate is treated as too identical to the seed reference.
         trainer_score_threshold (float): Threshold used by evaluation loop to classify
             correct vs incorrect technique execution.
         evaluate_dir (str, optional): Optional dataset root for offline evaluation.
@@ -1815,6 +1877,10 @@ def run(
         raise ValueError("--reference-sequence-mode must be one of: fixed, event_centered, stance_cycle")
     if reference_capture_buffer_multiplier < 1:
         raise ValueError("--reference-capture-buffer-multiplier must be >= 1")
+    if capture_seed_min_score < 0.0 or capture_seed_max_score > 100.0:
+        raise ValueError("--capture-seed min/max scores must be in [0, 100]")
+    if capture_seed_min_score > capture_seed_max_score:
+        raise ValueError("--capture-seed-min-score must be <= --capture-seed-max-score")
     if ref_stance_min_frames < 2:
         raise ValueError("--ref-stance-min-frames must be >= 2")
     if ref_stance_hold_frames < 1:
@@ -1870,6 +1936,9 @@ def run(
         "ref_min_motion_energy": ref_min_motion_energy,
         "ref_min_return_closure": ref_min_return_closure,
         "ref_min_score_gate": ref_min_score_gate,
+        "capture_seed_reference_dir": capture_seed_reference_dir,
+        "capture_seed_min_score": capture_seed_min_score,
+        "capture_seed_max_score": capture_seed_max_score,
         "ref_stance_start_threshold": ref_stance_start_threshold,
         "ref_stance_end_threshold": ref_stance_end_threshold,
         "ref_stance_peak_threshold": ref_stance_peak_threshold,
@@ -1907,6 +1976,11 @@ def run(
 
     # Virtual trainer setup
     references = load_reference_pose_library(reference_dir)
+    capture_seed_references = (
+        load_reference_pose_library(capture_seed_reference_dir)
+        if capture_seed_reference_dir
+        else {}
+    )
     if label_thresholds_path is None:
         auto_threshold_path = Path(reference_dir) / "label_thresholds.json"
         if auto_threshold_path.exists():
@@ -1916,6 +1990,11 @@ def run(
         print(f"loaded per-label thresholds: {sorted(label_thresholds.keys())}")
     if record_reference:
         print(f"reference recording armed for technique: {record_reference}")
+    if capture_seed_reference_dir:
+        print(
+            f"capture seed bank loaded from '{capture_seed_reference_dir}': "
+            f"{sorted(list(capture_seed_references.keys()))}"
+        )
     if trainer_enabled and is_pose_model:
         if not references and not record_reference:
             print(f"warning: no reference poses found in '{reference_dir}'. Use --record-reference to create one.")
@@ -2193,9 +2272,22 @@ def run(
                                         passes_gate, gate_score = _passes_reference_score_gate(
                                             capture_seq, references, technique_key, ref_min_score_gate
                                         )
-                                        if passes_gate:
+                                        passes_seed_gate, seed_score, has_seed_refs = _passes_reference_similarity_band(
+                                            capture_seq,
+                                            capture_seed_references,
+                                            technique_key,
+                                            capture_seed_min_score,
+                                            capture_seed_max_score,
+                                            bypass_if_missing=True,
+                                        )
+                                        if passes_gate and passes_seed_gate:
                                             # Prefer technique-match score when references exist, otherwise motion strength.
-                                            base_score = float(gate_score) if has_existing_refs else float(min(100.0, energy * 100.0))
+                                            if has_existing_refs:
+                                                base_score = float(gate_score)
+                                            elif has_seed_refs:
+                                                base_score = float(seed_score)
+                                            else:
+                                                base_score = float(min(100.0, energy * 100.0))
                                             selection_score = base_score + 15.0 * float(closure)
                                             prev_best = float(best_reference_candidate["selection_score"]) if best_reference_candidate else -1.0
                                             if best_reference_candidate is None or selection_score > prev_best:
@@ -2205,14 +2297,16 @@ def run(
                                                     "energy": float(energy),
                                                     "closure": float(closure),
                                                     "gate_score": float(gate_score),
+                                                    "seed_score": float(seed_score),
                                                     "selection_score": float(selection_score),
                                                     "has_existing_refs": has_existing_refs,
+                                                    "has_seed_refs": has_seed_refs,
                                                 }
                                                 if debug:
                                                     print(
                                                         f"[debug] best-window updated frame={frame_counter} "
                                                         f"selection={selection_score:.2f} motion={energy:.3f} "
-                                                        f"closure={closure:.3f} gate={gate_score:.1f}"
+                                                        f"closure={closure:.3f} gate={gate_score:.1f} seed={seed_score:.1f}"
                                                     )
                                 else:
                                     append_indexed = record_reference_max_saves == 0 or record_reference_max_saves > 1
@@ -2221,11 +2315,14 @@ def run(
                                         record_reference=record_reference,
                                         reference_dir=reference_dir,
                                         references=references,
+                                        capture_seed_references=capture_seed_references,
                                         source=str(source),
                                         frame_counter=frame_counter,
                                         ref_min_motion_energy=ref_min_motion_energy,
                                         ref_min_return_closure=ref_min_return_closure,
                                         ref_min_score_gate=ref_min_score_gate,
+                                        capture_seed_min_score=capture_seed_min_score,
+                                        capture_seed_max_score=capture_seed_max_score,
                                         last_saved_frame=last_reference_saved_frame,
                                         reference_capture_cooldown_frames=reference_capture_cooldown_frames,
                                         append_indexed=append_indexed,
@@ -2446,13 +2543,16 @@ def run(
                 best_motion = float(best_reference_candidate.get("energy", 0.0))
                 best_closure = float(best_reference_candidate.get("closure", 0.0))
                 gate_score = float(best_reference_candidate.get("gate_score", 0.0))
+                seed_score = float(best_reference_candidate.get("seed_score", 0.0))
                 selection_score = float(best_reference_candidate.get("selection_score", 0.0))
                 has_existing_refs = bool(best_reference_candidate.get("has_existing_refs", False))
+                has_seed_refs = bool(best_reference_candidate.get("has_seed_refs", False))
                 gate_text = f"{gate_score:.1f}" if has_existing_refs else "bootstrap"
+                seed_text = f", seed={seed_score:.1f}" if has_seed_refs else ""
                 print(
                     f"saved best-window reference technique '{record_reference}' to: {ref_path} "
                     f"(selection={selection_score:.2f}, motion={best_motion:.3f}, closure={best_closure:.3f}, "
-                    f"gate={gate_text}, frame={best_frame})"
+                    f"gate={gate_text}{seed_text}, frame={best_frame})"
                 )
                 if enable_structured_storage:
                     _write_reference_meta(
@@ -2722,6 +2822,34 @@ def parse_opt() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--capture-seed-reference-dir",
+        type=str,
+        default=None,
+        help=(
+            "optional reference directory used only to seed reference capture. "
+            "Useful for Golden Seed-derived .npy references when new captures should stay similar "
+            "but not identical"
+        ),
+    )
+    parser.add_argument(
+        "--capture-seed-min-score",
+        type=float,
+        default=0.0,
+        help=(
+            "minimum similarity score a candidate must achieve against the capture seed bank "
+            "before it can be saved (default: 0.0)"
+        ),
+    )
+    parser.add_argument(
+        "--capture-seed-max-score",
+        type=float,
+        default=100.0,
+        help=(
+            "maximum similarity score allowed against the capture seed bank. Lower this to reject "
+            "near-identical copies of Golden Seed references (default: 100.0)"
+        ),
+    )
+    parser.add_argument(
         "--person-selection-mode",
         type=str,
         default="most_motion",
@@ -2812,10 +2940,3 @@ def main(opt: argparse.Namespace) -> None:
 if __name__ == "__main__":
     opt = parse_opt()
     main(opt)
-
-#python action_recognition.py --weights yolo26n-pose.pt --device 0 --source "https://www.youtube.com/watch?v=ymNcMLqzNwI" --output-path output_video.mp4 --video-classifier-model microsoft/xclip-base-patch32 --save-kpts-dir keypoints --visualize-pose --pose-output-path datasets/pose_video.mp4
-
-#python action_recognition.py --weights yolo26n-pose.pt --device 0 --source "https://www.youtube.com/watch?v=ymNcMLqzNwI" --output-path output_video.mp4 --video-classifier-model microsoft/xclip-base-patch32 --save-kpts-dir keypoints --visualize-pose --pose-output-path datasets/pose_video.mp4 --no-boxes  
-#python action_recognition.py --weights yolo26n-pose.pt --source "https://www.youtube.com/watch?v=WV_OH8cuJFw" --record-reference front_kick --target-technique front_kick --reference-dir reference_poses --visualize-pose --save-kpts-dir keypoints --num-video-sequence-samples 12 --skip-frame 1 
-
-#cd "c:\Users\URJXHC\OneDrive - Everllence SE\Documents\ComputerVision\BsC\ultralytics-main\examples\BachelorsProject" & "c:\Users\URJXHC\OneDrive - Everllence SE\Documents\ComputerVision\BsC\.venv\Scripts\python.exe" "action_recognition.py"   --weights "yolo26n-pose.pt"   --source "https://www.youtube.com/watch?v=YOUR_VIDEO_ID"   --record-reference "jab__front"  --target-technique "jab"  --reference-dir "reference_poses"  --num-video-sequence-samples 12  --skip-frame 1  --save-kpts-dir "keypoints"  --disable-video-classifier  --visualize-pose  --auto-exit-after-reference

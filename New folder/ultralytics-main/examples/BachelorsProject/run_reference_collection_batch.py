@@ -12,6 +12,65 @@ from pathlib import Path
 from ultralytics.utils.tqdm import TQDM
 
 
+PUNCH_PROFILE = {
+    "reference_sequence_mode": "stance_cycle",
+    "num_video_sequence_samples": 20,
+    "ref_min_motion_energy": 0.03,
+    "ref_min_return_closure": 0.22,
+    "capture_seed_min_score": 74.0,
+    "capture_seed_max_score": 93.0,
+    "ref_stance_start_threshold": 0.17,
+    "ref_stance_end_threshold": 0.12,
+    "ref_stance_peak_threshold": 0.30,
+    "ref_stance_min_frames": 20,
+    "ref_stance_hold_frames": 4,
+}
+
+KICK_PROFILE = {
+    "reference_sequence_mode": "stance_cycle",
+    "num_video_sequence_samples": 24,
+    "ref_min_motion_energy": 0.05,
+    "ref_min_return_closure": 0.28,
+    "capture_seed_min_score": 70.0,
+    "capture_seed_max_score": 91.0,
+    "ref_stance_start_threshold": 0.20,
+    "ref_stance_end_threshold": 0.14,
+    "ref_stance_peak_threshold": 0.38,
+    "ref_stance_min_frames": 24,
+    "ref_stance_hold_frames": 4,
+}
+
+STANCE_PROFILE = {
+    "reference_sequence_mode": "stance_cycle",
+    "num_video_sequence_samples": 24,
+    "ref_min_motion_energy": 0.015,
+    "ref_min_return_closure": 0.10,
+    "capture_seed_min_score": 78.0,
+    "capture_seed_max_score": 96.0,
+    "ref_stance_start_threshold": 0.12,
+    "ref_stance_end_threshold": 0.08,
+    "ref_stance_peak_threshold": 0.18,
+    "ref_stance_min_frames": 24,
+    "ref_stance_hold_frames": 5,
+}
+
+TECHNIQUE_CAPTURE_PROFILES = {
+    "fighting_stance": STANCE_PROFILE,
+    "jab": PUNCH_PROFILE,
+    "cross": PUNCH_PROFILE,
+    "hook": PUNCH_PROFILE,
+    "uppercut": PUNCH_PROFILE,
+    "elbow_strike": PUNCH_PROFILE,
+    "front_kick": KICK_PROFILE,
+    "side_kick": KICK_PROFILE,
+    "roundhouse_kick": KICK_PROFILE,
+    "back_kick": KICK_PROFILE,
+    "spinning_back_kick": KICK_PROFILE,
+    "knee_strike": KICK_PROFILE,
+    "axe_kick": KICK_PROFILE,
+}
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run batch reference capture commands from generated plan CSV.")
     parser.add_argument(
@@ -48,6 +107,27 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=6,
         help="max CPU threads for child capture process (default: 6)",
+    )
+    parser.add_argument(
+        "--capture-seed-reference-dir",
+        type=str,
+        default=None,
+        help=(
+            "optional reference directory used only for capture gating. Point this to a Golden Seed-derived "
+            "reference bank when new captures should be similar but not identical"
+        ),
+    )
+    parser.add_argument(
+        "--capture-seed-min-score",
+        type=float,
+        default=0.0,
+        help="minimum similarity score required against the capture seed bank (default: 0.0)",
+    )
+    parser.add_argument(
+        "--capture-seed-max-score",
+        type=float,
+        default=100.0,
+        help="maximum similarity score allowed against the capture seed bank (default: 100.0)",
     )
     parser.add_argument(
         "--allow-source-reuse",
@@ -132,6 +212,39 @@ def _preflight_distinct_sources(ready_rows: list[dict[str, str]], required_count
     return issues
 
 
+def _normalize_key(text: str) -> str:
+    return "_".join((text or "").strip().lower().replace("-", " ").split())
+
+
+def _capture_profile_for_technique(technique: str, args: argparse.Namespace) -> dict[str, float | int | str]:
+    profile = dict(TECHNIQUE_CAPTURE_PROFILES.get(_normalize_key(technique), {}))
+    if not profile:
+        profile = {
+            "reference_sequence_mode": "fixed",
+            "num_video_sequence_samples": args.num_video_sequence_samples,
+            "ref_min_motion_energy": 0.02,
+            "ref_min_return_closure": float(args.ref_min_return_closure),
+            "capture_seed_min_score": float(args.capture_seed_min_score),
+            "capture_seed_max_score": float(args.capture_seed_max_score),
+            "ref_stance_start_threshold": 0.18,
+            "ref_stance_end_threshold": 0.12,
+            "ref_stance_peak_threshold": 0.30,
+            "ref_stance_min_frames": 24,
+            "ref_stance_hold_frames": 4,
+        }
+
+    if args.num_video_sequence_samples != 20:
+        profile["num_video_sequence_samples"] = args.num_video_sequence_samples
+    if abs(float(args.ref_min_return_closure) - 0.20) > 1e-9:
+        profile["ref_min_return_closure"] = float(args.ref_min_return_closure)
+    if abs(float(args.capture_seed_min_score) - 0.0) > 1e-9:
+        profile["capture_seed_min_score"] = float(args.capture_seed_min_score)
+    if abs(float(args.capture_seed_max_score) - 100.0) > 1e-9:
+        profile["capture_seed_max_score"] = float(args.capture_seed_max_score)
+
+    return profile
+
+
 def main() -> int:
     args = parse_args()
     if args.examples_per_angle < 1:
@@ -142,6 +255,12 @@ def main() -> int:
         return 2
     if args.cpu_threads < 1:
         print("cpu-threads must be >= 1")
+        return 2
+    if args.capture_seed_min_score < 0.0 or args.capture_seed_max_score > 100.0:
+        print("capture-seed min/max scores must be in [0, 100]")
+        return 2
+    if args.capture_seed_min_score > args.capture_seed_max_score:
+        print("capture-seed-min-score must be <= capture-seed-max-score")
         return 2
 
     project_root = Path(__file__).resolve().parent
@@ -167,6 +286,9 @@ def main() -> int:
             "reference_search_max_frames": 1800,
             "cooldown_seconds": args.cooldown_seconds,
             "allow_source_reuse": args.allow_source_reuse,
+            "capture_seed_reference_dir": args.capture_seed_reference_dir,
+            "capture_seed_min_score": args.capture_seed_min_score,
+            "capture_seed_max_score": args.capture_seed_max_score,
         },
     )
 
@@ -253,68 +375,100 @@ def main() -> int:
             f"[{i}/{len(ready_rows)}] running: {technique}/{angle} "
             f"need {needed} more example(s), sources available={len(source_urls)}"
         )
+        profile = _capture_profile_for_technique(technique, args)
+        print(f"  profile: {profile}")
 
         start_idx = len(existing_files) + 1
         for ex_idx in range(start_idx, start_idx + needed):
             indexed_key = f"{technique}__{angle}_{ex_idx:02d}"
             out_file = technique_dir / f"{angle}_{ex_idx:02d}.npy"
             source_idx = (ex_idx - start_idx) % len(source_urls)
-            source_url = source_urls[source_idx]
-            cmd = [
-                sys.executable,
-                "action_recognition.py",
-                "--weights",
-                "yolo26n-pose.pt",
-                "--source",
-                source_url,
-                "--record-reference",
-                indexed_key,
-                "--reference-capture-mode",
-                "best_window",
-                "--target-technique",
-                technique,
-                "--reference-dir",
-                "reference_poses",
-                "--num-video-sequence-samples",
-                str(args.num_video_sequence_samples),
-                "--skip-frame",
-                "1",
-                "--save-kpts-dir",
-                "keypoints",
-                "--record-reference-max-saves",
-                "1",
-                "--reference-capture-cooldown-frames",
-                "24",
-                "--disable-video-classifier",
-                "--no-display",
-                "--auto-exit-after-reference",
-                "--reference-search-max-frames",
-                "1800",
-                "--person-selection-mode",
-                "most_motion",
-                "--disable-structured-storage",
-                "--ref-min-motion-energy",
-                "0.02",
-                "--ref-min-return-closure",
-                f"{float(args.ref_min_return_closure):.2f}",
-                "--ref-min-score-gate",
-                "0",
-            ]
+            rotated_sources = source_urls[source_idx:] + source_urls[:source_idx]
+            print(f"  - example {ex_idx:02d}: {indexed_key} (starting source {source_idx + 1}/{len(source_urls)})")
+            example_saved = False
+            for attempt_idx, source_url in enumerate(rotated_sources, start=1):
+                cmd = [
+                    sys.executable,
+                    "action_recognition.py",
+                    "--weights",
+                    "yolo26n-pose.pt",
+                    "--source",
+                    source_url,
+                    "--record-reference",
+                    indexed_key,
+                    "--reference-capture-mode",
+                    "best_window",
+                    "--reference-sequence-mode",
+                    str(profile["reference_sequence_mode"]),
+                    "--target-technique",
+                    technique,
+                    "--reference-dir",
+                    "reference_poses",
+                    "--num-video-sequence-samples",
+                    str(profile["num_video_sequence_samples"]),
+                    "--skip-frame",
+                    "1",
+                    "--save-kpts-dir",
+                    "keypoints",
+                    "--record-reference-max-saves",
+                    "1",
+                    "--reference-capture-cooldown-frames",
+                    "24",
+                    "--disable-video-classifier",
+                    "--no-display",
+                    "--auto-exit-after-reference",
+                    "--reference-search-max-frames",
+                    "1800",
+                    "--person-selection-mode",
+                    "most_motion",
+                    "--disable-structured-storage",
+                    "--ref-min-motion-energy",
+                    f"{float(profile['ref_min_motion_energy']):.2f}",
+                    "--ref-min-return-closure",
+                    f"{float(profile['ref_min_return_closure']):.2f}",
+                    "--ref-min-score-gate",
+                    "0",
+                    "--ref-stance-start-threshold",
+                    f"{float(profile['ref_stance_start_threshold']):.2f}",
+                    "--ref-stance-end-threshold",
+                    f"{float(profile['ref_stance_end_threshold']):.2f}",
+                    "--ref-stance-peak-threshold",
+                    f"{float(profile['ref_stance_peak_threshold']):.2f}",
+                    "--ref-stance-min-frames",
+                    str(int(profile['ref_stance_min_frames'])),
+                    "--ref-stance-hold-frames",
+                    str(int(profile['ref_stance_hold_frames'])),
+                ]
+                if args.capture_seed_reference_dir:
+                    cmd.extend(
+                        [
+                            "--capture-seed-reference-dir",
+                            args.capture_seed_reference_dir,
+                            "--capture-seed-min-score",
+                            f"{float(profile['capture_seed_min_score']):.2f}",
+                            "--capture-seed-max-score",
+                            f"{float(profile['capture_seed_max_score']):.2f}",
+                        ]
+                    )
 
-            print(f"  - example {ex_idx:02d}: {indexed_key} (source {source_idx + 1}/{len(source_urls)})")
-            try:
-                result = subprocess.run(cmd, cwd=project_root, timeout=900, env=child_env)
-            except subprocess.TimeoutExpired:
-                print(f"  - timed out after 900s: {indexed_key}")
-                row_failed = True
-                break
+                print(f"    attempt {attempt_idx}/{len(rotated_sources)} source={source_url}")
+                try:
+                    result = subprocess.run(cmd, cwd=project_root, timeout=1200, env=child_env)
+                except subprocess.TimeoutExpired:
+                    print(f"    timed out after 1200s (20 minutes) on source {attempt_idx}: {source_url}")
+                    continue
 
-            if result.returncode == 0 and out_file.exists():
-                saved_for_row += 1
-                examples_saved += 1
-                print(f"  - saved: {out_file}")
-            else:
-                print(f"  - failed rc={result.returncode}: {indexed_key}")
+                if result.returncode == 0 and out_file.exists():
+                    saved_for_row += 1
+                    examples_saved += 1
+                    example_saved = True
+                    print(f"  - saved: {out_file}")
+                    break
+
+                print(f"    failed rc={result.returncode} on source {attempt_idx}: {source_url}")
+
+            if not example_saved:
+                print(f"  - all sources failed for {indexed_key}")
                 row_failed = True
                 break
 

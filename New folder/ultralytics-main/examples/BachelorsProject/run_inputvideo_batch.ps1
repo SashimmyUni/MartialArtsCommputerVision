@@ -1,7 +1,9 @@
 $ErrorActionPreference = "Continue"
 Set-Location $PSScriptRoot
 
-$pythonExe = "c:/Users/Sashi/Documents/Bachelor/MartialArtsComputerVision/MartialArtsCommputerVision/.venv/Scripts/python.exe"
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..\..\..")
+$venvPython = Join-Path $repoRoot ".venv\Scripts\python.exe"
+$pythonExe = if (Test-Path $venvPython) { $venvPython } else { "python" }
 $batchTag = Get-Date -Format "yyyyMMdd_HHmmss"
 $logDir = Join-Path $PSScriptRoot ("data/runs/inputvideo_final_" + $batchTag)
 $outDir = Join-Path $PSScriptRoot "output_input_batch"

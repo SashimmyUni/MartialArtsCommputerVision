@@ -22,6 +22,12 @@ from pathlib import Path
 from typing import Any
 
 
+def _normalize_key(text: str) -> str:
+    normalized = text.strip().replace("-", " ").replace("_", " ")
+    normalized = " ".join(normalized.lower().split())
+    return normalized.replace(" ", "_")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Merge scouted YouTube videos into batch collection plan."
@@ -100,8 +106,8 @@ def save_plan_csv(rows: list[dict[str, str]], path: str | Path) -> None:
 
 def technique_angle_key(row: dict[str, str]) -> str:
     """Create a unique key for deduplication."""
-    technique = (row.get("technique") or "").strip().lower()
-    angle = (row.get("angle") or "").strip().lower()
+    technique = _normalize_key(row.get("technique") or "")
+    angle = _normalize_key(row.get("angle") or "")
     return f"{technique}#{angle}"
 
 

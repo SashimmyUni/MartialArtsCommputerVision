@@ -7,28 +7,30 @@ Use these commands from this folder:
 ## 1) Optional environment setup (Windows PowerShell)
 
 ```powershell
-cd "c:\Users\Sashi\Documents\Bachelor\Finalbsc\bschCV\ultralytics-main\examples\BachelorsProject"
+cd "c:\Users\Sashi\Documents\Bachelor\MartialArtsComputerVision\MartialArtsCommputerVision"
 
 # If your venv is at repo root:
-& "c:\Users\Sashi\Documents\Bachelor\Finalbsc\bschCV\.venv\Scripts\Activate.ps1"
+& ".\.venv\Scripts\Activate.ps1"
+
+cd ".\New folder\ultralytics-main\examples\BachelorsProject"
 ```
 
 ## 2) Fast trainer run on local video (recommended)
 
 ```powershell
-python action_recognition.py --source 0 --target-technique jab --reference-dir reference_poses --output-path output_demo_Live.mp4 --skip-frame 2
+python action_recognition.py --source "InputVideo\FrontKick_Input.mp4" --target-technique front_kick --reference-dir reference_poses
 ```
 
 ## 3) Trainer run with pose visualization video output
 
 ```powershell
-python action_recognition.py --source 0 --target-technique jab --reference-dir reference_poses --output-path output_demo.mp4 --disable-video-classifier --visualize-pose --pose-output-path datasets/pose_video.mp4 --skip-frame 2 --no-display
+python action_recognition.py --source "InputVideo\FrontKick_Input.mp4" --target-technique front_kick --reference-dir reference_poses --output-path output_demo.mp4 --disable-video-classifier --visualize-pose --pose-output-path datasets/pose_front_kick.mp4 --no-display
 ```
 
 ## 4) Webcam trainer
 
 ```powershell
-python action_recognition.py --source "InputVideo\FrontKick_Input.mp4" --target-technique FrontKick --reference-dir reference_poses
+python action_recognition.py --source 0 --target-technique jab --reference-dir reference_poses
 ```
 
 ## 5) Manual reference capture (best window)
@@ -54,7 +56,7 @@ python action_recognition.py `
 
 ```powershell
 python action_recognition.py `
-  --source "reference_poses/Golden_Seeds/jab/FrontJab_Right.MOV" `
+   --source "reference_poses/Golden_Seeds/Jab/FrontJab_Right.MOV" `
   --record-reference "jab__frontjab_right_stancecycle" `
   --target-technique _capture_only `
   --reference-dir reference_poses `
@@ -78,7 +80,7 @@ python action_recognition.py `
 ## 7) Preview one reference pose
 
 ```powershell
-python visualize_reference_pose.py --reference-file reference_poses/jab/frontjab_right_bestwindow_150f.npy --save-video reference_poses/previews/jab/frontjab_right_bestwindow_150f.mp4 --no-window --overwrite
+python visualize_reference_pose.py --reference-file reference_poses/front_kick/front_01.npy --save-video reference_poses/previews/front_kick/front_01.mp4 --no-window --overwrite
 ```
 
 ## 8) Preview all references under a folder
@@ -133,7 +135,7 @@ Scout YouTube videos using Golden Seeds as templates. The scout uses the camera 
 
 Set your YouTube API key:
 ```powershell
-$env:YOUTUBE_API_KEY = "AIzaSyB2Llk3RK_nL9a5tIIZrUmtqSueCo2BMPo"
+$env:YOUTUBE_API_KEY = "<your-api-key>"
 ```
 
 Scout all Golden Seeds techniques/angles:

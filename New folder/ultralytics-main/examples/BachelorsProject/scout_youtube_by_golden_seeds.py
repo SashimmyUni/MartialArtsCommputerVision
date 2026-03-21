@@ -32,6 +32,7 @@ from scout_utils import (
     inventory_golden_seeds,
     create_csv_template_row,
     infer_angle_from_filename,
+    normalize_technique_key,
 )
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
@@ -376,7 +377,7 @@ def main() -> int:
     # Build list of (technique, angle) to scout
     scout_targets: list[tuple[str, str]] = []
     if args.technique:
-        technique_lower = args.technique.lower().replace("_", " ")
+        technique_lower = normalize_technique_key(args.technique)
         if technique_lower in inventory:
             if args.angle:
                 if args.angle in inventory[technique_lower]:
