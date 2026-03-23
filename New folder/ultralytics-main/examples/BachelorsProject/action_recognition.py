@@ -1520,8 +1520,8 @@ def _draw_reference_ghost(
             overlay,
             ghost_pose,
             conf_thres=0.01,
-            joint_color=(150, 255, 180),
-            edge_color=(90, 230, 120),
+            joint_color=(0, 0, 255),
+            edge_color=(0, 0, 255),
             joint_radius=3,
             edge_thickness=2,
         )
