@@ -40,6 +40,15 @@ MARTIAL_ARTS_LABELS = [
     "axe kick",
 ]
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def _resolve_project_path(path_value: str | None) -> Path | None:
+    if path_value is None:
+        return None
+    p = Path(path_value)
+    return p if p.is_absolute() else PROJECT_ROOT / p
+
 
 class TorchVisionVideoClassifier:
     """Video classifier using pretrained TorchVision models for action recognition.
@@ -1908,6 +1917,27 @@ def run(
 
     if labels is None or len(labels) == 0:
         labels = MARTIAL_ARTS_LABELS.copy()
+    weights = str(_resolve_project_path(weights))
+    reference_dir = str(_resolve_project_path(reference_dir))
+    if capture_seed_reference_dir:
+        capture_seed_reference_dir = str(_resolve_project_path(capture_seed_reference_dir))
+    if evaluate_dir:
+        evaluate_dir = str(_resolve_project_path(evaluate_dir))
+    if label_thresholds_path:
+        label_thresholds_path = str(_resolve_project_path(label_thresholds_path))
+    storage_root = str(_resolve_project_path(storage_root))
+    if output_path:
+        output_path = str(_resolve_project_path(output_path))
+    if save_kpts_dir:
+        save_kpts_dir = str(_resolve_project_path(save_kpts_dir))
+    if pose_output_path:
+        pose_output_path = str(_resolve_project_path(pose_output_path))
+
+    source_path = Path(source)
+    source_is_webcam = source.isdigit()
+    source_is_url = source.startswith("http")
+    if not source_is_webcam and not source_is_url and source_path.suffix:
+        source = str(_resolve_project_path(source))
 
     run_config = {
         "weights": weights,
@@ -1967,9 +1997,9 @@ def run(
     # detect pose capability from resolved model task (more robust than filename checks)
     is_pose_model = getattr(yolo_model, "task", "") == "pose"
 
-    # By default, save pose keypoints under the current working directory.
+    # By default, save pose keypoints under this script's project root.
     if is_pose_model and save_kpts_dir is None:
-        save_kpts_dir = "keypoints"
+        save_kpts_dir = str(PROJECT_ROOT / "keypoints")
 
     if save_kpts_dir is not None and not is_pose_model:
         print("warning: --save-kpts-dir was set, but the selected model is not a pose model; keypoints will not be saved.")
@@ -2094,8 +2124,8 @@ def run(
     pose_writer = None
     if visualize_pose:
         if pose_output_path is None:
-            # default to datasets folder
-            default_path = Path("datasets") / "pose_video.mp4"
+            # Default to the datasets folder under the project root.
+            default_path = PROJECT_ROOT / "datasets" / "pose_video.mp4"
             default_path.parent.mkdir(parents=True, exist_ok=True)
             pose_output_path = str(default_path)
         else:

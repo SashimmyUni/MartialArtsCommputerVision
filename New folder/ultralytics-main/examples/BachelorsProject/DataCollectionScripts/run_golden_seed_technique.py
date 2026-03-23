@@ -7,6 +7,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+import cv2
+
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 
@@ -45,6 +47,28 @@ def _infer_angle_from_filename(file_name: str) -> str | None:
     if "side" in text or "profile" in text:
         return "side"
     return None
+
+
+def _fallback_angle_from_filename(file_name: str) -> str:
+    stem = Path(file_name).stem.lower()
+    slug = re.sub(r"[^a-z0-9]+", "_", stem).strip("_")
+    return slug or "clip"
+
+
+def _video_frame_count(video_path: Path) -> int | None:
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+    count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    return count if count > 0 else None
+
+
+def _effective_sequence_samples(requested: int, frame_count: int | None) -> int:
+    if frame_count is None:
+        return max(requested, 2)
+    max_by_video = max(frame_count - 1, 2)
+    return min(max(requested, 2), max_by_video)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -122,6 +146,14 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print planned commands without running them",
     )
+    parser.add_argument(
+        "--strict-capture",
+        action="store_true",
+        help=(
+            "use strict best-window capture gates. By default this script uses a relaxed capture mode "
+            "to maximize saves from reviewed Golden Seeds clips"
+        ),
+    )
     return parser
 
 
@@ -153,15 +185,15 @@ def main() -> int:
 
     angle_counters: dict[str, int] = defaultdict(int)
     planned: list[tuple[Path, str, int, str, Path, list[str]]] = []
-    skipped_unknown = 0
+    relabeled_unknown = 0
     skipped_exists = 0
 
     for file_path in candidate_files:
         angle = _infer_angle_from_filename(file_path.name)
         if not angle:
-            print(f"skip (unknown angle): {file_path.name}")
-            skipped_unknown += 1
-            continue
+            angle = _fallback_angle_from_filename(file_path.name)
+            relabeled_unknown += 1
+            print(f"warn: unknown angle pattern, using fallback angle '{angle}' for {file_path.name}")
 
         angle_counters[angle] += 1
         idx = angle_counters[angle]
@@ -172,6 +204,9 @@ def main() -> int:
             print(f"skip (exists): {out_file}")
             skipped_exists += 1
             continue
+
+        frame_count = _video_frame_count(file_path)
+        effective_samples = _effective_sequence_samples(args.num_video_sequence_samples, frame_count)
 
         cmd = [
             sys.executable,
@@ -187,9 +222,9 @@ def main() -> int:
             "--reference-dir",
             str(reference_root),
             "--reference-capture-mode",
-            "best_window",
+            "best_window" if args.strict_capture else "first_valid",
             "--num-video-sequence-samples",
-            str(args.num_video_sequence_samples),
+            str(effective_samples),
             "--skip-frame",
             "1",
             "--record-reference-max-saves",
@@ -200,16 +235,16 @@ def main() -> int:
             "--no-display",
             "--auto-exit-after-reference",
             "--reference-search-max-frames",
-            str(args.reference_search_max_frames),
+            str(args.reference_search_max_frames if args.strict_capture else 0),
             "--person-selection-mode",
             "most_motion",
             "--disable-structured-storage",
             "--ref-min-motion-energy",
-            str(args.ref_min_motion_energy),
+            str(args.ref_min_motion_energy if args.strict_capture else 0.0),
             "--ref-min-return-closure",
-            str(args.ref_min_return_closure),
+            str(args.ref_min_return_closure if args.strict_capture else 0.0),
             "--ref-min-score-gate",
-            str(args.ref_min_score_gate),
+            str(args.ref_min_score_gate if args.strict_capture else 0.0),
         ]
         planned.append((file_path, angle, idx, record_reference, out_file, cmd))
 
@@ -219,7 +254,7 @@ def main() -> int:
             "summary:",
             {
                 "planned": 0,
-                "skipped_unknown": skipped_unknown,
+                "relabeled_unknown": relabeled_unknown,
                 "skipped_exists": skipped_exists,
             },
         )
@@ -228,6 +263,10 @@ def main() -> int:
     print(f"golden folder: {golden_dir}")
     print(f"output folder: {out_dir}")
     print(f"planned runs: {len(planned)}")
+    print(
+        "capture mode:",
+        "strict" if args.strict_capture else "relaxed (capture-all)",
+    )
 
     if args.dry_run:
         for i, (file_path, angle, idx, record_reference, out_file, cmd) in enumerate(planned, start=1):
@@ -237,7 +276,7 @@ def main() -> int:
             "summary:",
             {
                 "planned": len(planned),
-                "skipped_unknown": skipped_unknown,
+                "relabeled_unknown": relabeled_unknown,
                 "skipped_exists": skipped_exists,
                 "dry_run": True,
             },
@@ -262,7 +301,7 @@ def main() -> int:
             "planned": len(planned),
             "succeeded": succeeded,
             "failed": failed,
-            "skipped_unknown": skipped_unknown,
+            "relabeled_unknown": relabeled_unknown,
             "skipped_exists": skipped_exists,
         },
     )
