@@ -1,0 +1,91 @@
+{
+  "created_at": "2026-03-24T23:56:29.325437+00:00",
+  "reference_dir": "C:\\Users\\Sashi\\Documents\\Bachelor\\MartialArtsComputerVision\\MartialArtsCommputerVision\\New folder\\ultralytics-main\\examples\\BachelorsProject\\reference_poses",
+  "evaluate_dir": "C:\\Users\\Sashi\\Documents\\Bachelor\\MartialArtsComputerVision\\MartialArtsCommputerVision\\New folder\\ultralytics-main\\examples\\BachelorsProject\\datasets\\validation",
+  "default_threshold": 70.0,
+  "objective": "maximize_f1_then_balanced_accuracy",
+  "thresholds": {
+    "axe_kick": 70.0,
+    "cross": 70.0,
+    "elbow": 70.0,
+    "fighting_stance": 70.0,
+    "front_kick": 70.0,
+    "hook": 70.0,
+    "jab": 70.0,
+    "knee_kick": 70.0,
+    "roundhouse_kick": 70.0,
+    "uppercut": 70.0
+  },
+  "metrics": {
+    "axe_kick": {
+      "status": "fallback_default",
+      "reason": "insufficient_samples",
+      "n_correct": 0,
+      "n_incorrect": 0,
+      "threshold": 70.0
+    },
+    "cross": {
+      "status": "fallback_default",
+      "reason": "insufficient_samples",
+      "n_correct": 0,
+      "n_incorrect": 0,
+      "threshold": 70.0
+    },
+    "elbow": {
+      "status": "fallback_default",
+      "reason": "insufficient_samples",
+      "n_correct": 0,
+      "n_incorrect": 0,
+      "threshold": 70.0
+    },
+    "fighting_stance": {
+      "status": "fallback_default",
+      "reason": "insufficient_samples",
+      "n_correct": 0,
+      "n_incorrect": 0,
+      "threshold": 70.0
+    },
+    "front_kick": {
+      "status": "fallback_default",
+      "reason": "insufficient_samples",
+      "n_correct": 0,
+      "n_incorrect": 0,
+      "threshold": 70.0
+    },
+    "hook": {
+      "status": "fallback_default",
+      "reason": "insufficient_samples",
+      "n_correct": 0,
+      "n_incorrect": 0,
+      "threshold": 70.0
+    },
+    "jab": {
+      "status": "fallback_default",
+      "reason": "insufficient_samples",
+      "n_correct": 0,
+      "n_incorrect": 0,
+      "threshold": 70.0
+    },
+    "knee_kick": {
+      "status": "fallback_default",
+      "reason": "insufficient_samples",
+      "n_correct": 0,
+      "n_incorrect": 0,
+      "threshold": 70.0
+    },
+    "roundhouse_kick": {
+      "status": "fallback_default",
+      "reason": "insufficient_samples",
+      "n_correct": 0,
+      "n_incorrect": 0,
+      "threshold": 70.0
+    },
+    "uppercut": {
+      "status": "fallback_default",
+      "reason": "insufficient_samples",
+      "n_correct": 0,
+      "n_incorrect": 0,
+      "threshold": 70.0
+    }
+  }
+}

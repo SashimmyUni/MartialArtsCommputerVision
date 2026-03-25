@@ -18,13 +18,13 @@ cd ".\New folder\ultralytics-main\examples\BachelorsProject"
 ## 2) Fast trainer run on local video (recommended)
 
 ```powershell
-python action_recognition.py --source "InputVideo\FrontKick_Input.mp4" --target-technique front_kick --reference-dir reference_poses
+python action_recognition.py --source "InputVideo\Jab.mp4" --target-technique jab --reference-dir reference_poses
 ```
 
 ## 3) Trainer run with pose visualization video output
 
 ```powershell
-python action_recognition.py --source "InputVideo\FrontKick_Input.mp4" --target-technique front_kick --reference-dir reference_poses --output-path output_demo.mp4 --disable-video-classifier --visualize-pose --pose-output-path datasets/pose_front_kick.mp4 --no-display
+python action_recognition.py --source "InputVideo\Jab_Pro_Done.mp4" --target-technique jab --reference-dir reference_poses --output-path Jab_Pro.mp4 --disable-video-classifier --visualize-pose --pose-output-path datasets/pose_jab_pro.mp4 --no-display
 ```
 
 ## 4) Webcam trainer
@@ -106,7 +106,7 @@ python run_reference_collection_batch.py --preflight-only
 Dry run first:
 
 ```powershell
-python run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance --dry-run
+python run_golden_seed_technique.py --technique-key jab --golden-technique-dir Jab --dry-run
 ```
 
 Run capture:
@@ -239,3 +239,26 @@ New references saved to: `reference_poses/jab/front_01.npy`, `jab/front_02.npy`,
 - Pose-only video (if enabled): `datasets/pose_video.mp4`
 - Preview videos: `reference_poses/previews/`
 - Structured run artifacts: `data/runs/`
+
+## 14) Oral expert-vs-program evaluation
+
+1) Create your expert labels CSV from this template:
+
+- `datasets/oral_eval/expert_scores_template.csv`
+
+Required columns:
+- `frame` (frame index where the expert judged the attempt)
+- `expert_score_1_10` (oral score on 1-10 scale)
+
+Optional columns:
+- `sample_id`, `technique`, `track_id`, `notes`
+
+2) Run matching + metrics:
+
+```powershell
+python DataCollectionScripts/evaluate_oral_scores.py    --metrics-csv data/runs/run_20260323_140007/metrics.csv    --expert-csv datasets/oral_eval/expert_scores_template.csv    --output-csv data/runs/oral_eval_matches.csv   --summary-json data/runs/oral_eval_summary.json    --max-frame-gap 20    --expert-pass-threshold 7.0
+```
+
+Outputs:
+- `data/runs/oral_eval_matches.csv` (row-by-row expert vs program comparison)
+- `data/runs/oral_eval_summary.json` (MAE, RMSE, Pearson r, pass agreement)
