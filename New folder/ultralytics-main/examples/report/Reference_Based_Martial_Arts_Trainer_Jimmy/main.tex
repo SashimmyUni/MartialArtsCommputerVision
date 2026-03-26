@@ -1,0 +1,691 @@
+\section{Reproducibility: Dependencies and Data Layout}
+
+\subsection{Dependencies}
+To reproduce results or run the pipeline, ensure the following dependencies are installed:
+\begin{itemize}
+    \item Python 3.9 or newer
+    \item numpy
+    \item opencv-python
+    \item torch (PyTorch)
+    \item ultralytics (YOLO)
+    \item torchvision
+    \item transformers (for Hugging Face video classifier, optional)
+    \item tqdm
+    \item (Optional) jupyter, matplotlib, pandas for analysis and visualization
+\end{itemize}
+Install all dependencies using `pip install -r requirements.txt` if provided, or individually as needed.
+
+\subsection{Data Layout}
+The following folder structure is required for correct operation:
+\begin{verbatim}
+examples/BachelorsProject/
+    action_recognition.py
+    DataCollectionScripts/
+    reference_poses/
+        <technique>/
+            <angle>.npy
+    datasets/
+        validation/
+            <technique>/
+                correct/
+                    *.npy
+                incorrect/
+                    *.npy
+    InputVideo/
+    Output/
+    keypoints/
+    ...
+\end{verbatim}
+\begin{itemize}
+    \item \texttt{reference\_poses/}: Stores canonical reference pose sequences, organized by technique and angle.
+    \item \texttt{datasets/validation/}: Contains validation data for threshold calibration, split into correct/incorrect for each technique.
+    \item \texttt{InputVideo/}: Place user or test videos here for evaluation.
+    \item \texttt{Output/}, \texttt{keypoints/}: Output folders for run artifacts, overlays, and metrics.
+\end{itemize}
+
+\noindent For further details, see the Guides/README.md and HOWTO.md.
+\appendix
+
+\section{Codebase Summary and Usage Instructions}
+
+\subsection{Codebase Structure}
+The project codebase is organized as follows:
+\begin{itemize}
+    \item \textbf{action\_recognition.py}: Main pipeline for pose-based technique evaluation, reference matching, scoring, and feedback.
+    \item \textbf{DataCollectionScripts/}: Scripts for collecting, filtering, and processing reference videos and validation data.
+    \begin{itemize}
+        \item \texttt{scrape\_jab\_candidates.py}: Collects candidate YouTube videos for reference creation.
+        \item \texttt{filter\_candidates.py}: Filters video candidates using keyword patterns.
+        \item \texttt{generate\_reference\_capture\_commands.py}: Converts reviewed CSVs into capture commands.
+        \item \texttt{run\_reference\_collection\_batch.py}: Batch processing for reference capture.
+        \item \texttt{calibrate\_label\_thresholds.py}: Calibrates per-technique score thresholds using validation data.
+    \end{itemize}
+    \item \textbf{reference\_poses/}: Stores canonical reference pose sequences (NumPy .npy files) organized by technique and angle.
+    \item \textbf{datasets/validation/}: Contains validation data for threshold calibration (split into correct/incorrect for each technique).
+    \item \textbf{Output/}, \textbf{Output\_input\_batch/}, etc.: Output folders for run artifacts, overlays, and metrics.
+\end{itemize}
+
+\subsection{Usage Instructions}
+\begin{enumerate}
+    \item \textbf{Reference Collection:}
+    \begin{itemize}
+        \item Use scripts in \texttt{DataCollectionScripts/} to scrape, filter, and prepare reference videos.
+        \item Run \texttt{action\_recognition.py} with the \texttt{--record-reference} option to capture pose sequences for each technique and angle.
+    \end{itemize}
+    \item \textbf{Threshold Calibration:}
+    \begin{itemize}
+        \item Organize validation data in \texttt{datasets/validation/<technique>/correct} and \texttt{incorrect} folders.
+        \item Run \texttt{calibrate\_label\_thresholds.py} to generate per-technique thresholds for scoring.
+    \end{itemize}
+    \item \textbf{Evaluation:}
+    \begin{itemize}
+        \item Run \texttt{action\_recognition.py} with a video source (webcam, file, or YouTube URL) and specify the target technique.
+        \item The script will output scores, feedback, overlays, and structured run artifacts.
+    \end{itemize}
+    \item \textbf{Reproducibility:}
+    \begin{itemize}
+        \item Ensure all dependencies are installed (see \texttt{requirements.txt} or project README).
+        \item Follow the documented folder structure for references and validation data.
+    \end{itemize}
+\end{enumerate}
+
+For more details, see inline comments in each script and the README file.
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{hyperref}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage{float}
+\geometry{margin=1in}
+\setstretch{1.5}
+
+\usepackage[backend=biber,style=ieee,sorting=nyt]{biblatex}
+\addbibresource{references.bib}
+
+\title{Automated Combat Sports Analysis Using Computer Vision}
+\author{Jimmy Huynh}
+\date{March 2026}
+
+\begin{document}
+
+\maketitle
+
+\newpage
+
+\begin{abstract}
+This thesis presents the design and evaluation of a reference-based system for automated assessment of martial-arts techniques. The system uses pose estimation to extract skeletal keypoints from video and compares user-performed movements against predefined reference sequences. By combining spatial alignment with temporal similarity measures, the system produces a continuous technique score and structured feedback.
+
+The primary objective of the project is to examine whether a pose-based trainer can distinguish between stronger and weaker executions and move toward agreement with expert judgement. In its current stage, the evaluation is limited to clip-level trainer outputs and supporting runtime artifacts. The codebase nevertheless includes the core components required for stronger later evaluation, including threshold calibration, structured run analysis, and comparison with expert-provided scores.
+
+The results support the feasibility of reference-based pose comparison as a foundation for automated martial-arts training support. At the same time, they show that stronger empirical validation still depends on labeled calibration data, broader participant-level testing, and more systematic comparison with human assessment.
+\end{abstract}
+
+\newpage
+
+\section{Introduction}
+Combat sports analysis has traditionally relied on human judgement, which introduces subjectivity and inconsistency. Judges evaluate techniques based on criteria such as precision, impact, balance, and control, but this process is vulnerable to bias and error in fast-moving exchanges \cite{quinn2024automation}. Recent advances in computer vision and deep learning provide an alternative approach by allowing human actions to be analyzed directly from video. In combat sports, this creates the possibility of extracting pose information, comparing an athlete's movements against a technical reference, and generating consistent quantitative feedback \cite{wu2024sthka,echeverria2021pose}.
+
+This thesis presents a computer-vision-based system for technique analysis in combat sports. Rather than treating the task purely as action classification, the implemented system is designed as a pose-driven trainer that evaluates the quality of execution of a target technique. The project combines person tracking, pose estimation, temporal pose-sequence processing, multi-angle reference matching, and threshold-based scoring. Its overall aim is to support training and evaluation by producing both a numerical score and corrective feedback.
+
+A further objective is to support the evaluation scenario proposed for the project: comparison between amateur and professional users of the system, and comparison between expert oral scores and program scores on a 1--10 scale. The current codebase provides the core scoring and logging logic required for such experiments, even though the final validation stage is not yet complete. Accordingly, this report describes the implemented system, the practical challenges encountered during development, the solutions adopted, and the extent to which the present evidence supports the intended evaluation goals.
+
+\section{Background and Literature Review}
+\subsection{Human Action Recognition and Pose Estimation}
+Human Action Recognition (HAR) seeks to identify movements or activities from image or video data. In sports contexts, HAR is especially useful because it can transform raw video into structured information about technique, and performance. However, sports video is difficult to analyse due to occlusion, variable viewpoints, large appearance differences, and rapid motion. These difficulties are even more pronounced in combat sports, where a technique may last only a fraction of a second and body parts are often partially hidden \cite{wu2024sthka}.
+
+Pose estimation addresses part of this problem by reducing video to a set of semantically meaningful keypoints. Instead of relying on raw pixels, a pose-based method represents the athlete as a skeleton, making it easier to compare body structure over time and across performers. Prior work indicates that pose estimation is especially relevant for martial arts and karate because technique quality is closely linked to joint alignment, body mechanics, and coordinated motion \cite{echeverria2021pose}. This makes pose-based analysis a suitable basis for a coaching-oriented system.
+
+\subsection{Combat Sports Analytics}
+Recent research has explored the use of computer vision for combat sports scoring, athlete tracking, and action recognition. Quinn and Corcoran argue that real-time object detection and pose estimation can be combined to generate meaningful performance statistics in combat sports and potentially reduce the effects of human error in scoring \cite{quinn2024automation}. Similarly, work on optimized YOLO pipelines for combat sports highlights the importance of careful data collection, data augmentation, modular system design, and domain-specific optimization when working with athletic video data \cite{quinn2025yolo}.
+
+Beyond officiating and statistics, related work also points toward coaching support. Pose-estimation systems are attractive in athletic settings because they can turn a movement into joint trajectories, timing information, and body-angle measurements that are easier to compare against a target pattern than raw video alone \cite{echeverria2021pose,wu2024sthka}. In practice, this means such systems can be used not only to recognise that an athlete performed a jab or kick, but also to indicate where the execution differs from a technical reference. That is a more useful coaching scenario than generic classification, because athletes need actionable feedback on extension, guard position, timing, and recovery rather than only a label.
+
+The literature also suggests an important usability requirement for sports-training systems: the feedback must be understandable and tied to a training context. A large generic model may recognise many motions, but it can be difficult for a coach to know what technical standard the model is implicitly applying. For this reason, reference-based approaches are particularly attractive in athlete support settings. They allow a coach or domain expert to define the target movement explicitly through curated exemplars, viewpoints, and technique categories. This makes the resulting assessment more transparent, easier to adapt to a specific gym or style, and easier to explain to athletes during training.
+
+At the same time, the literature makes clear that generic video classification alone is not enough. A technically useful system must cope with viewpoint changes, noisy data, short action windows, and the absence of large labelled datasets specific to combat sports \cite{wu2024sthka,quinn2025yolo}. These issues strongly influenced the design decisions in the present project.
+
+In recent years, several real-world systems and commercial applications have emerged to support athletes using computer vision and pose estimation. For example, the BlazePose model, developed by Google, is integrated into fitness apps and wearables to provide real-time feedback on exercise form and posture, enabling users to correct their movements during workouts \cite{wu2024sthka}. Commercial platforms such as Coach's Eye and Dartfish offer video analysis tools that allow coaches and athletes to annotate, compare, and review technique frame-by-frame, although these typically rely on manual input rather than automated pose extraction. More advanced systems, like the MoveNet and OpenPose frameworks, have been incorporated into prototype coaching applications that automatically detect keypoints and provide feedback on joint angles, symmetry, and movement efficiency.
+
+Research prototypes have also demonstrated the potential of automated feedback in sports training. Echeverria and Santos \cite{echeverria2021pose} developed a system for karate that uses pose estimation to model psychomotor performance, providing quantitative metrics for technique assessment. Similarly, Quinn and Corcoran \cite{quinn2024automation} describe a real-time combat sports analysis platform that combines object detection and pose estimation to generate performance statistics and reduce human error in judging. These examples illustrate the growing adoption of computer vision-based systems for athlete support, ranging from commercial video review tools to fully automated feedback platforms in both research and practice.
+
+\section{System Design}
+The implemented project is not a simple end-to-end classifier that takes a video and outputs a label. Instead, it is a modular, pose-driven pipeline built around person tracking, pose-sequence extraction, reference matching, and threshold-based scoring. The central implementation is contained in \texttt{action\_recognition.py}, which uses an Ultralytics YOLO pose model to detect and track people, extract keypoints in COCO-17 format, and maintain temporal histories of those keypoints for each tracked identity \cite{projectActionRecognition}. The code defines support for the labels \textit{fighting stance, jab, cross, hook, uppercut, front kick, roundhouse kick, side kick, back kick, spinning back kick, knee strike, elbow strike,} and \textit{axe kick} \cite{projectActionRecognition}.
+
+The pipeline begins with a video source, which may be a webcam, local file or a YouTube URL. For each frame, the YOLO pose model performs person detection and pose estimation. The extracted poses are associated with persistent track identifiers, allowing the system to follow one athlete over time rather than analysing isolated frames only \cite{projectActionRecognition}. This temporal continuity is important because a technique such as a jab or kick cannot be judged from a single still image.
+
+The overall architecture is best understood as two connected phases rather than one monolithic process. The first phase is a \emph{setup or training phase}, in which the trainer curates the reference bank, captures or selects canonical examples, organises them by technique and angle, and, where data is available, calibrates thresholds. The second phase is the \emph{live analysis phase}, in which a new user performance is recorded, converted into a pose sequence, matched against the curated bank, and scored. Separating these phases is important conceptually: the system does not learn a hidden standard from a large black-box dataset during use, but instead evaluates against an explicit reference library that can be inspected and extended.
+
+This also means the system is not locked to only the current techniques. The present implementation already includes a predefined set of labels and heuristics for common punches and kicks \cite{projectActionRecognition}, but the underlying design is extendable. New techniques can be added by creating additional reference sequences, organizing them under the same technique-first folder structure, and, where needed, defining technique-specific angle or threshold settings. In that sense, the practical limit is not the pipeline itself, but the availability and quality of curated references for the new motion.
+
+\begin{figure}[H]
+\centering
+\fbox{\parbox{0.94\textwidth}{
+\centering
+\textbf{Setup / training phase}\\[2mm]
+Select target technique $\rightarrow$ collect or record reference clips $\rightarrow$ extract pose sequences $\rightarrow$ organize by technique and angle $\rightarrow$ optionally calibrate thresholds\\[4mm]
+\textbf{Live analysis phase}\\[2mm]
+Capture user video $\rightarrow$ detect and track pose $\rightarrow$ extract temporal window $\rightarrow$ compare against reference bank $\rightarrow$ choose best-matching variation $\rightarrow$ score, classify, and return feedback
+}}
+\caption{High-level separation between the offline setup phase and the live analysis phase.}
+\label{fig:system_pipeline}
+\end{figure}
+
+The implementation also supports optional video classification. The code includes interfaces for pretrained TorchVision video models such as S3D, R3D-18, Swin3D, and MViT, as well as a zero-shot Hugging Face X-CLIP classifier \cite{projectActionRecognition}. However, the project architecture clearly prioritises pose-based scoring. In many of the reference-collection workflows, the video classifier is explicitly disabled so that the system focuses on clean pose extraction and technique comparison instead of generic action labels \cite{projectFrontKickLog,projectSeedLog}.
+
+A central design element is the reference-pose library. Canonical techniques are stored as \texttt{.npy} files containing pose sequences. The loader supports both a legacy flat structure and a multi-angle layout of the form \texttt{reference\_poses/<technique>/<angle>.npy} \cite{projectActionRecognition,projectReadme}. This is an important methodological choice because the same technique can appear substantially different across camera angles. Rather than forcing every user attempt to match a single canonical view or technique variation, the system selects the best-matching angle and movement pattern from the reference bank \cite{projectActionRecognition}.
+
+The specific pose variation is therefore not chosen manually at runtime by the user. Instead, for the requested technique, the system evaluates the available reference variants and selects the one that yields the best overall match score. In practical terms, this means that a jab performed from one viewpoint can be compared against side-view jab references, while the same technique from a different viewpoint can be matched against a more suitable frontal or 45-degree reference if such a variant exists in the bank. The quality of this selection depends directly on how representative the curated reference variations are.
+
+The scoring process begins by normalising each pose frame. The body is centred using the hip midpoint when available, and the coordinates are scaled by shoulder distance or a fallback body-based scale \cite{projectActionRecognition}. This reduces the influence of camera distance, translation, and body size. The system then compares the user sequence against the reference sequence using several pose-based measures. These include Dynamic Time Warping for temporal alignment, cosine similarity of flattened pose trajectories, and technique-specific joint angle error using the joints most relevant to punches or kicks \cite{projectActionRecognition}. For striking actions, the code also computes wrist motion energy and wrist return closure, two handcrafted measures intended to capture whether a movement contains both meaningful extension and a realistic return phase \cite{projectActionRecognition}.
+
+The trainer output is therefore richer than a class label. For each evaluated attempt, the system can return a best-matching angle, a numerical score, a score threshold, a correctness decision, and generated feedback \cite{projectActionRecognition}. If the attempt falls below the threshold, the code constructs a ghost-pose overlay from the reference sequence, allowing visual comparison between the observed movement and the expected technique \cite{projectActionRecognition}. This is particularly relevant in a training setting because it connects the numerical evaluation to a concrete visual correction. The code also includes a pathway for exporting oral scores and aligning them with program outputs, thereby supporting later comparison between expert judgement and system-generated scores, \cite{projectEvaluateOralScores}.
+
+The implementation also includes structured storage of experimental artifacts. It can create dedicated run folders containing configuration metadata, metric rows, track summaries, and overlays \cite{projectActionRecognition}. From a research perspective, this is valuable because it improves reproducibility, makes experiments easier to compare, and supports later analysis of failures and edge cases.
+
+\section{Challenges and Solutions}
+\subsection{Challenge 1: Building a Reference Dataset}
+One of the most difficult parts of the project was not model inference itself, but the creation of a reliable reference library. Unlike benchmark-driven projects that begin with a large labelled dataset, this system depends on curated canonical examples of techniques. This aligns with the literature, which identifies data collection, annotation, and dataset quality as major constraints in combat sports computer vision \cite{quinn2024automation,quinn2025yolo}.
+
+The codebase addresses this challenge through a semi-automated workflow. 
+
+First, \texttt{scrape\_jab\_candidates.py} collects candidate YouTube videos for a target technique using the YouTube Data API and stores them with metadata such as title, duration, and URL \cite{projectScrape}. Second, \texttt{filter\_candidates.py} applies hand-designed keep and reject keyword patterns to filter obvious false positives and non-technique content \cite{projectFilter}. Third, \texttt{generate\_reference\_capture\_commands.py} converts reviewed CSV rows into executable PowerShell commands for reference capture \cite{projectGenerate}. Fourth, \texttt{run\_reference\_collection\_batch.py} executes these capture jobs in batch mode with checks for source diversity, controls on examples per angle, CPU throttling, and cooldown periods \cite{projectRunBatch}. This workflow directly addresses the challenge of collecting high-quality references from messy web video sources.
+The most consistent type of data has been extracting self made videos or reviewed youtube videos, as it can be recorded in controlled environments to reduce noise.
+
+\subsection{Challenge 2: Viewpoint Sensitivity}
+A technique in 2D pose space can vary substantially with camera placement. A jab observed from the side may appear very different from a jab observed from the front, even when biomechanically correct. Prior literature identifies viewpoint variation as a core difficulty in martial arts and action recognition more broadly \cite{wu2024sthka,echeverria2021pose}.
+
+During development it has been discovered that a side view, the Orthodox (left foot/hand forward, right-handed) fighting stance yields the best results. Technical difficulties can be seen using Soutpaw (right foot/hand forward, left-handed) with right side view and vice-versa, as this causes hidden joints from specific angles. This causes the normalization to misalign center position and the sizing of the pose figure.
+
+To combat this issue, a multi-angle reference design has been implemented. The project makes use of a technique-first folder layout in which each technique can store separate angle files such as \texttt{front}, \texttt{left45}, \texttt{right45} \texttt{left}, \texttt{right} and \texttt{behind }\cite{projectReadme}. During evaluation, the code does not compare an athlete against a single reference template. Instead, it evaluates all available angle references for the target technique and selects the one with the best score \cite{projectActionRecognition}. This substantially improves robustness to viewpoint mismatch.
+
+\subsection{Challenge 3: Temporal Segmentation of Techniques}
+A combat technique is not defined by one frame. A punch, for example, includes initiation, extension, peak action, and recovery. If a saved reference window begins too early or ends too late, the resulting sequence contains irrelevant motion and becomes a weak template. This problem is especially important in combat sports because many actions are brief and explosive, but during technical training, often slow movement and prolonged duration.
+
+The project addresses this challenge inside \texttt{action\_recognition.py} through explicit sequence extraction logic. The code supports event-centered extraction around peak wrist extension and a stance-cycle mode based on start, peak, and end thresholds \cite{projectActionRecognition}. It also uses wrist motion energy and wrist return closure as gates before saving a reference, so that only sequences with meaningful motion and plausible return behaviour are accepted \cite{projectActionRecognition}. This is a practical solution to the problem of noisy or poorly segmented reference windows.
+Combining this solution with Dynamic Time Warping creates a program, that work for both explosive and slow actions.
+
+\subsection{Challenge 4: Translating Similarity into Correctness}
+A raw score is informative, but it does not by itself define what counts as a correct technique. A threshold that is appropriate for one action may be too strict or too lenient for another. This problem becomes more severe when different techniques vary in visibility, temporal stability, and sensitivity to joint noise.
+
+The solution implemented in the project is \texttt{calibrate\_label\_thresholds.py}. This script assumes a validation layout of \texttt{datasets/validation/<technique>/correct/*.npy} and \texttt{datasets/validation/<technique>/incorrect/*.npy}. For each technique, it scores validation sequences against the reference bank, searches across candidate thresholds, and chooses the threshold that maximizes F1 score and then balanced accuracy \cite{projectCalibrate}.
+
+\subsection{Challenge 5: Runtime Constraints and Detection Gaps}
+The runtime logs show that pose-based reference collection is feasible on CPU hardware, but not trivial. This project has been run using the following specifications:
+
+\begin{itemize}
+    \item Processor	AMD Ryzen 9 5900X 12-Core Processor             (3.70 GHz)
+    \item Installed RAM	16,0 GB
+    \item System type	64-bit operating system, x64-based processor
+    \item NVIDIA GeForce GTX 1660 SUPER
+    \item NVIDIA Cuda ON
+\end{itemize}
+
+In front-kick reference expansion runs, the code processed frames at approximately 10--16 frames per second in many segments, and the logs also contain repeated \textit{no detections} frames \cite{projectFrontKickLog,projectFrontKickStrictLog}. The seed batch run log similarly illustrates the non-negligible cost of continuous pose inference \cite{projectSeedLog}. This is consistent with the literature, which argues that real-time combat analysis is achievable only with careful management of resources and data quality \cite{quinn2024automation,quinn2025yolo}.
+
+The implementation mitigates this through several engineering controls. The scripts expose configurable frame skipping, CPU thread limits, cooldown periods between batch jobs, preflight source checks, headless operation, and a \texttt{fast-mode} preset that disables expensive visual components \cite{projectActionRecognition,projectRunBatch}. Furthermore, CUDA enabled massive parallelism, allowing tasks to run much faster than on traditional CPUs. This has accelerated video processing significantly. 
+These measures are not incidental; they are part of the project's answer to practical deployment constraints.
+
+\section{Experimental Setup}
+The uploaded Git Repository supports two related evaluation modes. The first is \textit{reference collection and calibration}, where canonical technique examples are captured and validated. The second is \textit{user evaluation}, where an athlete performs a target technique and the system compares that pose sequence against the calibrated reference bank.
+
+Reference examples are stored as NumPy arrays of keypoint sequences in COCO-17 format \cite{projectActionRecognition}. The project documentation specifies a multi-angle folder structure for techniques, while the progress document shows that the intended capture plan consists of 52 total targets. The batch collection script aims by default for four examples per angle, subject to sufficient source diversity \cite{projectRunBatch}. This means the intended experiment design is systematic rather than ad hoc.
+
+For evaluation, \texttt{calibrate\_label\_thresholds.py} requires validation examples for each technique split into \texttt{correct} and \texttt{incorrect} folders \cite{projectCalibrate}. Every validation clip is scored using the same best-reference matching routine used by the trainer, and the threshold is selected automatically from the observed score distribution. This is important because it means the acceptance rule is derived from validation evidence rather than hand tuning.
+
+For an \textit{amateur versus professional} experiment, both groups can perform the same target techniques under comparable recording conditions, after which the system score, threshold decision, and score variance can be compared across groups. For an \textit{expert versus system} experiment, professional practitioner provide an oral score on a 1--100 scale for each attempt, and that score can then be compared against a normalized version of the system's internal score. The code supports the core metrics needed for these experiments.
+
+
+\section{Results}
+
+This section presents evaluation results for each supported technique. Tables and figures will be updated incrementally as new results become available.
+
+\subsection{Jab}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Jab (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{jab_example.png}
+\caption{Example output for Jab (to be added)}
+\end{figure}
+
+\subsection{Cross}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Cross (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{cross_example.png}
+\caption{Example output for Cross (to be added)}
+\end{figure}
+
+\subsection{Hook}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Hook (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{hook_example.png}
+\caption{Example output for Hook (to be added)}
+\end{figure}
+
+\subsection{Uppercut}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Uppercut (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{uppercut_example.png}
+\caption{Example output for Uppercut (to be added)}
+\end{figure}
+
+\subsection{Front Kick}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Front Kick (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{frontkick_example.png}
+\caption{Example output for Front Kick (to be added)}
+\end{figure}
+
+\subsection{Roundhouse Kick}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Roundhouse Kick (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{roundhousekick_example.png}
+\caption{Example output for Roundhouse Kick (to be added)}
+\end{figure}
+
+\subsection{Side Kick}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Side Kick (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{sidekick_example.png}
+\caption{Example output for Side Kick (to be added)}
+\end{figure}
+
+\subsection{Back Kick}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Back Kick (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{backkick_example.png}
+\caption{Example output for Back Kick (to be added)}
+\end{figure}
+
+\subsection{Spinning Back Kick}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Spinning Back Kick (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{spinningbackkick_example.png}
+\caption{Example output for Spinning Back Kick (to be added)}
+\end{figure}
+
+\subsection{Knee Strike}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Knee Strike (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{kneestrike_example.png}
+\caption{Example output for Knee Strike (to be added)}
+\end{figure}
+
+\subsection{Elbow Strike}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Elbow Strike (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{elbowstrike_example.png}
+\caption{Example output for Elbow Strike (to be added)}
+\end{figure}
+
+\subsection{Axe Kick}
+\begin{table}[H]
+\centering
+\caption{Evaluation metrics for Axe Kick (to be filled)}
+\begin{tabular}{lcccc}
+\toprule
+Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
+\midrule
+% Data to be filled in
+\end{tabular}
+\end{table}
+\begin{figure}[H]
+\centering
+%\includegraphics[width=0.7\textwidth]{axekick_example.png}
+\caption{Example output for Axe Kick (to be added)}
+\end{figure}
+
+\section{Discussion}
+
+This section will analyze and interpret the results for each technique as they become available. Comparative insights, strengths, weaknesses, and observed trends will be discussed here. (To be updated as results are filled in.)
+
+At a qualitative level, the reported examples are consistent with the intended trainer logic. Windows above threshold are marked as correct, whereas lower-scoring windows trigger corrective feedback and, where configured, ghost-pose guidance. The figure-based jab comparison also serves as a screenshot-based demonstration of the system output, showing the tracked skeleton, bounding box, activity label, and score overlay while visually highlighting differences in extension and guard position across examples. These observations are compatible with the system design, but they remain clip-level observations rather than participant-level findings.
+
+\begin{figure}[h!]
+\centering
+% Top row
+\begin{minipage}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Jab_FP_pro.png}
+\end{minipage}
+\hfill
+\begin{minipage}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Jab_FP_ext_Pro.png}
+\end{minipage}
+
+\vspace{0.5cm}
+% Bottom row
+\begin{minipage}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Jab_Ama_Guard_Good.png}
+\end{minipage}
+\hfill
+\begin{minipage}{0.48\textwidth}
+    \centering
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Jab_Ama_Guard.png}
+\end{minipage}
+
+\caption{Illustrative jab comparison. The examples visually highlight differences in extension and guard position, which correspond to the kinds of deviations the trainer is designed to score and comment on.}
+\label{fig:jab_comparison}
+\end{figure}
+
+\subsection*{Professional Oral Score vs Program Score}
+A limited comparison between trainer output and human scoring was conducted for selected jab clips. In this comparison, the program score is derived from the structured run metrics, while the trainer score represents the external human judgement assigned to the same clip on a 1--100 scale. The purpose of this comparison is not to claim a completed statistical validation, but to examine whether the automated scoring behaves in a direction that is broadly consistent with human assessment.
+
+Table~\ref{tab:run_level_summary} summarizes the clip-level results. Here, \textit{Windows} denotes the number of evaluated temporal segments extracted from a clip, \textit{Accepted} denotes the number of segments classified as correct by the trainer, and \textit{Acceptance rate} expresses the proportion of accepted windows. The \textit{Program Score} is the aggregate score produced by the system, while the \textit{Trainer Score} is the manually assigned evaluation. The standard deviation indicates the spread of window-level scores within each clip.
+\begin{table}[H]
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{lcccccc}
+\toprule
+Source clip & Windows & Accepted & Acceptance rate (\%) & Program Score & Trainer Score & Std. dev. \\
+\midrule
+\texttt{Jab\_Pro.mp4} & 564 & 465 & 82.4 & 91.81 & 85 & 10.41  \\
+\texttt{Jab\_Ama.mp4} & 632 & 354 & 56.0 & 62.07 & 60 & 21.18  \\
+\texttt{RightJab.mp4} & 316 & 217 & 75.7 & 83.03 & 80 & 9.87  \\
+\texttt{WrongJab.mp4} & 296 & 132 & 44.6 & 42.11 & 60 & 18.27  \\
+\bottomrule
+\end{tabular}
+}
+\caption{Run-level trainer acceptance summary from structured metrics logs.}
+\label{tab:run_level_summary}
+\end{table}
+
+The comparison shows that the system captures the broad ordering of performance quality in the small set of examples considered. The professional jab clip receives the highest program score and also one of the highest human scores, while the clearly weaker jab clip receives the lowest program score. Similarly, the amateur and intermediate examples occupy the middle range in both human and program assessment. This indicates that the scoring pipeline is sensitive to meaningful differences in execution quality rather than producing arbitrary scores.
+
+At the same time, the comparison also highlights the limits of the present evaluation. The gap between \texttt{WrongJab.mp4} and its human score shows that the system can still diverge substantially from expert judgement in individual cases. This is important because it suggests that some technical flaws may be weighted differently by the automated similarity metrics than by a human evaluator. In other words, the current results support partial agreement in relative ranking, but they do not yet justify strong claims about precise score agreement.
+
+The most defensible interpretation is therefore that the oral-score comparison provides encouraging but preliminary evidence. The trainer appears capable of reflecting major differences in jab quality, but a proper validation would require a larger set of clips, multiple human raters, and formal agreement measures such as correlation or mean absolute error. In its current form, this comparison should be understood as an illustrative consistency check rather than a completed expert-validation study.
+
+\subsection*{Component Metric Analysis}
+This subsection is included to explain why particular runs received different overall scores. Rather than introducing a separate evaluation claim, it opens the scoring function and shows which components contributed most clearly to lower or higher outcomes.
+
+To understand score behavior, component means from run summaries were compared. For \texttt{WrongJab\_Input.mp4}, DTW and mean pose distance were both approximately 0.43, while for \texttt{Jab.mp4} they increased to approximately 1.74 and 1.77, respectively. Because the final score combines cosine, DTW, angle, and pose-distance terms, higher temporal and geometric distance directly lowers acceptance.
+
+Both runs most frequently matched the reference angle \texttt{left45\_02}, indicating that this view currently dominates the best-match selection. The most common corrective cues were \textit{Extend your punching arm more} and \textit{Keep your guard hand higher}, which is consistent with observed errors in extension and rear-hand guard maintenance.
+
+\subsection*{Threshold Calibration Status}
+This subsection clarifies an important boundary of the current results: some runs can be demonstrated directly, but a fully calibrated pass/fail interpretation still depends on labeled validation data. Its purpose is therefore to distinguish between what the thesis can show now and what remains part of the evaluation pipeline.
+
+Threshold calibration is implemented in the project, and its logic is methodologically clear. The script expects labeled validation sequences organized by technique and class (\texttt{correct} and \texttt{incorrect}), scores those sequences against the reference bank, searches across candidate thresholds, and selects the operating point that maximizes F1 score and then balanced accuracy \cite{projectCalibrate}. It also records accuracy, precision, recall, balanced accuracy, and the underlying confusion counts. In methodological terms, this means the project does not need to rely on hand-tuned thresholds; it includes a reproducible procedure for learning them from validation data.
+
+The limitation is that the uploaded repository snapshot does not include the labeled validation sets or exported threshold file needed to report final calibrated jab thresholds in this thesis version. As a result, the present report cannot honestly claim completed per-technique calibration results. The available evidence therefore supports the existence and rationale of the calibration pipeline, but not a finished calibrated performance analysis.
+
+To make this status explicit, Table~\ref{tab:threshold_status} summarizes what can be reported defensibly from the current materials.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{p{0.28\textwidth} p{0.62\textwidth}}
+\toprule
+Item & Status in current thesis snapshot \\
+\midrule
+Calibration script & Implemented and available in codebase \\
+Validation layout & \texttt{datasets/validation/<technique>/{correct,incorrect}/*.npy} \\
+Threshold selection rule & Maximize F1, then balanced accuracy \\
+Reported per-technique threshold values & Not available from uploaded data snapshot \\
+Interpretation of current jab runs & Fixed-threshold examples, not final calibrated evaluation \\
+\bottomrule
+\end{tabular}
+\caption{Threshold-calibration status based on the uploaded code and repository snapshot.}
+\label{tab:threshold_status}
+\end{table}
+
+% ----------------------
+% End System Demonstration Chapter
+% ----------------------
+
+% The rest of the report continues...
+\section{Results and Evaluation}
+
+This section reports evidence produced by the implemented pipeline and evaluates what can, and cannot, be concluded from the available material. The uploaded codebase clearly supports structured run logging, per-window scoring, feedback generation, and per-technique threshold calibration \cite{projectActionRecognition,projectAnalyzeRunMetrics,projectCalibrate}. The results below should be interpreted as evidence of system functionality under the available configuration.
+
+\subsection{Implemented Evaluation Capability}
+The implemented system produces four outputs that are directly relevant to technique training. First, it identifies the best matching reference angle for a performed action \cite{projectActionRecognition}. Second, it computes a continuous similarity-based technique score. Third, it converts that score into a binary pass/fail judgement using either a default threshold or a technique-specific calibrated threshold when such a calibration file is available \cite{projectActionRecognition,projectCalibrate}. Fourth, when an attempt is judged incorrect, it can generate corrective cues and ghost-pose visual guidance \cite{projectActionRecognition}. Taken together, these outputs move the project beyond action recognition alone and toward formative technical feedback.
+
+The evaluation tooling is also broader than the final user-facing trainer output. The run-summary script aggregates metrics such as score mean, score variance, threshold mean, DTW distance, angle error, pose distance, dominant reference angle, and the most common feedback messages from stored \texttt{metrics.csv} files \cite{projectAnalyzeRunMetrics}. In addition, the oral-score evaluation script can align expert 1--10 ratings with stored trainer scores to quantify human--system agreement when such annotations are available \cite{projectEvaluateOralScores}. This is important because it shows that the codebase already supports a meaningful evaluation protocol even though that protocol is not yet fully populated with final data.
+
+\subsection{Evidence from Runtime and Structured Logs}
+The runtime logs provide direct evidence that the system was used to collect and process reference material \cite{projectFrontKickLog,projectSeedLog}. They show the trainer running in reference-oriented workflows, with pose extraction active and operational controls such as batch execution and preconfigured processing steps. The same logs also contain stretches with missed detections, which is a practically important result in itself. For combat-sports analysis, unstable person detection can propagate into poor sequence extraction and therefore into unreliable similarity scores. The logs therefore support the design decision to combine reference curation, structured storage, thresholding, and feedback rather than relying on raw frame-wise detections alone.
+
+The structured run outputs provide the strongest quantitative evidence available in the current repository snapshot. For each processed run, the system stores per-window scores and associated component metrics, which makes it possible to summarize system behaviour statistically instead of relying only on visual examples or anecdotal observations \cite{projectActionRecognition,projectAnalyzeRunMetrics}. This logging design is a strength of the project because it preserves the intermediate evidence needed for later recalibration and external review.
+
+
+
+\subsection{Summary}
+Taken together, the available evidence supports four conclusions. First, the system can capture, store, and compare pose sequences in a structured way. Second, it can generate stable run artifacts that are suitable for later quantitative analysis. Third, it can provide technique-relevant feedback rather than only a class label. Fourth, it already contains the machinery needed for stronger future evaluation, including threshold calibration and expert-score matching \cite{projectActionRecognition,projectAnalyzeRunMetrics,projectCalibrate,projectEvaluateOralScores}.
+
+What the current evidence does \emph{not} yet support is equally important. It does not justify a strong claim that the trainer already separates professional and amateur execution reliably across participants. It also does not justify reporting final per-technique performance metrics for jab or other techniques without the missing labeled calibration data. The correct scientific interpretation is therefore that the project demonstrates a working evaluation pipeline and promising trainer logic, while the final validation stage remains incomplete.
+
+\section{Discussion}
+The results indicate that the implemented system functions as a pose-based trainer rather than merely as an action recognizer. Across the reported jab examples, the system produces structured outputs that include acceptance rates, aggregate scores, variation across windows, and technique-relevant feedback. This is an important distinction, because the practical value of such a system depends not only on identifying a technique, but on assessing whether the movement was performed well enough to be considered acceptable.
+
+One important finding is that the system appears capable of distinguishing stronger and weaker executions at a broad level. The professional jab example achieved the highest acceptance rate and the highest program score, while the weaker jab example received the lowest score and acceptance rate. The intermediate cases fell between these extremes. This pattern suggests that the combination of pose normalization, temporal alignment, multi-angle reference matching, and threshold-based scoring captures features that are relevant to execution quality.
+
+The oral-score comparison supports this interpretation, but only cautiously. The relative ordering of clips is broadly consistent between the automated scores and the human-assigned trainer scores, which is encouraging. However, the mismatch observed for the weakest jab example also shows that agreement is not yet strong enough to claim that the system replicates human judgement reliably. The current evaluation therefore supports the claim that the trainer behaves plausibly, but not the stronger claim that it has been fully validated against expert scoring.
+
+The component-level analysis also helps explain why the system behaves as it does. Higher DTW distance and mean pose distance were associated with lower scores, which is consistent with the intended logic of the scoring function. In addition, the trainer repeatedly produced feedback related to arm extension and guard position, which matches visually observable differences in the sample clips. This strengthens the interpretation that the system is responding to technique-relevant deviations rather than only to noise in the video.
+
+A further strength of the project is that the implementation already contains the infrastructure needed for more rigorous evaluation. Reference collection, run logging, threshold calibration, and oral-score comparison are all separated into explicit scripts and workflows. This improves reproducibility and makes the system easier to extend. The design is therefore not only a proof of concept in software terms, but also a useful experimental framework for future empirical testing.
+
+From a usability perspective, this structure is also beneficial for both trainers and end users. For the trainer or coach, the system does not have to depend on a single large and opaque database of generic movements. Instead, the trainer can curate the reference bank by selecting the techniques, exemplars, viewpoints, and quality standards that match a specific training context. This makes the system more transparent and more controllable, because the basis for evaluation is defined explicitly rather than hidden inside a broad black-box dataset.
+
+For the user, this curation has practical value because the feedback can be tied to the style and expectations of the trainer who prepared the references. In that sense, the tool is not only a scoring system, but also a way of translating a trainer's preferred technical standard into a repeatable digital format. This can make feedback easier to interpret, especially when the goal is to practice a limited set of techniques consistently rather than to compare against a very broad and potentially mismatched database.
+
+The main limitations remain substantial. First, the current evidence is based on a small number of clips and should therefore be treated as illustrative rather than statistically conclusive. Second, the reliability of the trainer depends heavily on the quality of the reference bank. Third, pose estimation errors and detection gaps can distort the resulting similarity measures. Fourth, technique thresholds have not yet been fully calibrated on a labeled validation set in the current thesis snapshot. These constraints weaken the strength of any pass/fail interpretation and limit how far the results can be generalized.
+
+Overall, the present results support a balanced conclusion. The system demonstrates that reference-based pose comparison is a technically feasible way to assess combat-sports technique quality and provide interpretable feedback. What has been demonstrated convincingly is the viability of the pipeline and the plausibility of the trainer outputs. What has not yet been demonstrated is full empirical validation across users, techniques, and expert raters. That distinction is central to the interpretation of this thesis.
+
+\section{Conclusion and Future Work}
+This thesis presented a computer-vision-based system for automated combat-sports technique analysis. The implemented approach uses pose estimation, temporal sequence comparison, multi-angle reference matching, structured run metrics, and threshold-based scoring to evaluate the quality of a performed action. Unlike a conventional action-recognition system, the goal was not only to identify a movement, but to assess how well it was executed and to provide feedback that is meaningful in a training context.
+
+The results show that this objective is achievable at a prototype level. The system can extract pose sequences from video, compare them against stored references, generate numerical scores, classify windows as accepted or rejected, and provide corrective cues linked to observable technical issues. In the jab examples reported in this thesis, the system produced score patterns that broadly reflected differences in execution quality, and its output was directionally consistent with human judgement in the limited oral-score comparison.
+
+The project therefore makes two main contributions. First, it demonstrates a complete technical pipeline for reference-based martial-arts assessment. Second, it shows that pose-driven scoring can move beyond pure action classification toward qualitative evaluation of technique. These contributions are meaningful because they establish both a working software artefact and a methodological basis for later empirical validation.
+
+At the same time, the thesis also makes clear that the current work should be interpreted as an initial validation rather than a finished assessment framework. The present evidence is limited in scale, threshold calibration is not yet complete for the available snapshot, and expert comparison has only been demonstrated on a small illustrative set. As a result, the strongest defensible conclusion is not that the system already matches expert judgement reliably, but that it provides a credible and technically coherent foundation for doing so in future work.
+
+Several extensions would strengthen the system substantially. The first priority is to expand and clean the reference library so that each target technique is represented by multiple high-quality examples from controlled viewpoints. The second is to build labeled validation sets for each technique, allowing the implemented calibration pipeline to produce defensible thresholds and report standard metrics such as precision, recall, F1 score, and balanced accuracy. The third is to conduct a larger expert-evaluation study in which multiple coaches score the same clips and the system outputs are compared against those ratings using formal agreement measures.
+
+A further direction for future work is to improve robustness in real-world footage. This includes handling more challenging viewpoints, reducing the effect of missing detections, and refining the temporal segmentation of short actions. It would also be useful to extend the evaluation beyond jab techniques to a broader set of punches and kicks, since that would test whether the scoring framework generalizes across movements with different biomechanics.
+
+In conclusion, the thesis shows that automated combat-sports technique assessment using computer vision is feasible and practically promising. While stronger empirical validation is still required, the implemented system already demonstrates the essential components of a pose-based digital trainer and provides a strong basis for continued development and evaluation.
+
+\printbibliography
+
+\newpage
+\section*{Appendix: Figures}
+This appendix contains all figures generated or referenced during the project. Each image is included below with its filename as caption for traceability.
+
+% List of all images in the folder
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Analyze_Run_Metrics.png}
+    \caption{Analyze\_Run\_Metrics.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Batch_Collection.png}
+    \caption{Batch\_Collection.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Coverage.png}
+    \caption{Coverage.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Filter_Candidates.png}
+    \caption{Filter\_Candidates.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Golden_Seeds.png}
+    \caption{Golden\_Seeds.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Jab_Ama_Guard.png}
+    \caption{Jab\_Ama\_Guard.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Jab_Ama_Guard_Good.png}
+    \caption{Jab\_Ama\_Guard\_Good.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Jab_FP_ext_Pro.png}
+    \caption{Jab\_FP\_ext\_Pro.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Jab_FP_pro.png}
+    \caption{Jab\_FP\_pro.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{picture.png}
+    \caption{picture.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Scout_Plan.png}
+    \caption{Scout\_Plan.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Visualize.png}
+    \caption{Visualize.png}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{Youtube_Scout_Golden.png}
+    \caption{Youtube\_Scout\_Golden.png}
+\end{figure}
+
+\end{document}
