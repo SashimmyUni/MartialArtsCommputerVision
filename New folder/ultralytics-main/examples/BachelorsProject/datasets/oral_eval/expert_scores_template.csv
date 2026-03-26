@@ -1,0 +1,17 @@
+sample_id,frame,expert_score_1_10,technique,track_id,notes
+p1,45,9.0,jab,1.0,professional - excellent extension and guard maintenance
+p2,120,8.5,jab,1.0,professional - clean technique with proper weight transfer
+p3,185,9.0,jab,1.0,professional - strong punch with good chamber
+p4,240,8.0,jab,1.0,professional - solid form and recovery
+p5,310,9.5,jab,1.0,professional - textbook jab with perfect timing
+p6,380,8.5,jab,1.0,professional - excellent follow-through
+p7,450,9.0,jab,1.0,professional - powerful and controlled
+p8,520,8.0,jab,1.0,professional - clean return to guard
+a1,60,3.0,jab,1.0,amateur - weak extension and dropped guard
+a2,130,2.5,jab,1.0,amateur - poor form with shoulder roll issues
+a3,195,2.0,jab,1.0,amateur - very late retraction and arm break
+a4,265,3.5,jab,1.0,amateur - sluggish movement with telegraphed punch
+a5,340,2.5,jab,1.0,amateur - inadequate hip rotation
+a6,410,3.0,jab,1.0,amateur - off-balance with poor footwork
+a7,475,1.5,jab,1.0,amateur - very weak punch with complete guard drop
+a8,545,2.0,jab,1.0,amateur - extremely lazy retraction
