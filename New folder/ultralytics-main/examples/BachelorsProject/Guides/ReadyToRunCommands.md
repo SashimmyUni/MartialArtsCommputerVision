@@ -106,19 +106,19 @@ python run_reference_collection_batch.py --preflight-only
 Dry run first:
 
 ```powershell
-python run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance --dry-run
+python DataCollectionScripts/run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance --dry-run
 ```
 
 Run capture:
 
 ```powershell
-python run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance
+python DataCollectionScripts/run_golden_seed_technique.py --technique-key jab --golden-technique-dir Jab --ref-stance-start-threshold 0.16 --ref-stance-end-threshold 0.16 --ref-stance-peak-threshold 0.22 --ref-stance-min-frames 16 --ref-stance-hold-frames 4
 ```
 
 Example for AxeKick:
 
 ```powershell
-python run_golden_seed_technique.py --technique-key axe_kick --golden-technique-dir AxeKick
+python DataCollectionScripts/run_golden_seed_technique.py --technique-key axe_kick --golden-technique-dir AxeKick --ref-stance-start-threshold 0.16 --ref-stance-end-threshold 0.16 --ref-stance-peak-threshold 0.22 --ref-stance-min-frames 16 --ref-stance-hold-frames 4
 ```
 
 ## 11) Jab seed-gated batch helper script
