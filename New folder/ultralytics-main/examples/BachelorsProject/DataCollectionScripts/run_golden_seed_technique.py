@@ -137,36 +137,6 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Minimum score gate for extraction (default: 0.0)",
     )
     parser.add_argument(
-        "--ref-stance-start-threshold",
-        type=float,
-        default=0.16,
-        help="Stance-cycle start threshold (default: 0.16)",
-    )
-    parser.add_argument(
-        "--ref-stance-end-threshold",
-        type=float,
-        default=0.16,
-        help="Stance-cycle return threshold (default: 0.16)",
-    )
-    parser.add_argument(
-        "--ref-stance-peak-threshold",
-        type=float,
-        default=0.22,
-        help="Stance-cycle minimum movement peak (default: 0.22)",
-    )
-    parser.add_argument(
-        "--ref-stance-min-frames",
-        type=int,
-        default=16,
-        help="Stance-cycle minimum extracted frame length (default: 16)",
-    )
-    parser.add_argument(
-        "--ref-stance-hold-frames",
-        type=int,
-        default=4,
-        help="Stance-cycle return hold frames (default: 4)",
-    )
-    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite existing output files",
@@ -180,8 +150,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "--strict-capture",
         action="store_true",
         help=(
-            "tighten best-window acceptance gates (motion/closure/score/search). "
-            "Best-window selection is always used for Golden Seeds"
+            "use strict best-window capture gates. By default this script uses a relaxed capture mode "
+            "to maximize saves from reviewed Golden Seeds clips"
         ),
     )
     return parser
@@ -252,9 +222,7 @@ def main() -> int:
             "--reference-dir",
             str(reference_root),
             "--reference-capture-mode",
-            "best_window",
-            "--reference-sequence-mode",
-            "stance_cycle",
+            "best_window" if args.strict_capture else "first_valid",
             "--num-video-sequence-samples",
             str(effective_samples),
             "--skip-frame",
@@ -277,16 +245,6 @@ def main() -> int:
             str(args.ref_min_return_closure if args.strict_capture else 0.0),
             "--ref-min-score-gate",
             str(args.ref_min_score_gate if args.strict_capture else 0.0),
-            "--ref-stance-start-threshold",
-            str(args.ref_stance_start_threshold),
-            "--ref-stance-end-threshold",
-            str(args.ref_stance_end_threshold),
-            "--ref-stance-peak-threshold",
-            str(args.ref_stance_peak_threshold),
-            "--ref-stance-min-frames",
-            str(args.ref_stance_min_frames),
-            "--ref-stance-hold-frames",
-            str(args.ref_stance_hold_frames),
         ]
         planned.append((file_path, angle, idx, record_reference, out_file, cmd))
 
@@ -305,10 +263,9 @@ def main() -> int:
     print(f"golden folder: {golden_dir}")
     print(f"output folder: {out_dir}")
     print(f"planned runs: {len(planned)}")
-    print("capture strategy:", "best_window")
     print(
-        "gate mode:",
-        "strict" if args.strict_capture else "relaxed",
+        "capture mode:",
+        "strict" if args.strict_capture else "relaxed (capture-all)",
     )
 
     if args.dry_run:
