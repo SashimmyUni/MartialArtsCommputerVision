@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import datetime
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -190,7 +191,13 @@ def main() -> int:
         candidate = runs_root / args.run_id / "metrics.csv"
         metrics_files = [candidate] if candidate.exists() else []
     else:
-        metrics_files = sorted(runs_root.glob("run_*/metrics.csv"))
+        # Recursively find all metrics.csv files under Proffesional and Amateur
+        metrics_files = []
+        for group_dir in runs_root.iterdir():
+            if not group_dir.is_dir() or group_dir.name not in {"Proffesional", "Amateur"}:
+                continue
+            for candidate in group_dir.rglob("metrics.csv"):
+                metrics_files.append(candidate)
 
     if not metrics_files:
         print(f"no metrics.csv files found under: {runs_root}")
@@ -213,6 +220,11 @@ def main() -> int:
     summaries.sort(key=lambda s: s.run_id)
 
     output_csv = _resolve_project_path(args.output_csv)
+    # If output_csv is default, add timestamp to filename
+    if args.output_csv == "data/runs/run_metrics_summary.csv":
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_csv = output_csv.with_name(f"run_metrics_summary_{ts}.csv")
+
     output_csv.parent.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [

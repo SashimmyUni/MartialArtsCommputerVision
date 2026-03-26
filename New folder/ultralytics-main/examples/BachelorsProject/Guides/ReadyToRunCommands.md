@@ -18,7 +18,18 @@ cd ".\New folder\ultralytics-main\examples\BachelorsProject"
 ## 2) Fast trainer run on local video (recommended)
 
 ```powershell
-python action_recognition.py --source "InputVideo\FrontKick_Input.mp4" --target-technique front_kick --reference-dir reference_poses
+# TROUBLESHOOTING: If you do not see the score or ghost overlay in the output video, follow this checklist:
+# 1. Make sure you are running this command from the BachelorsProject folder:
+#    cd "c:\Users\Sashi\Documents\Bachelor\MartialArtsComputerVision\MartialArtsCommputerVision\New folder\ultralytics-main\examples\BachelorsProject"
+# 2. Ensure your reference pose exists: reference_poses/jab/*.npy or reference_poses/jab.npy
+# 3. Do NOT use --disable-trainer or --no-boxes (unless you want to hide overlays)
+# 4. Use --debug to see verbose output and confirm scoring is happening
+# 5. Check that your model is a pose model (yolo26n-pose.pt)
+# 6. If you want to see the ghost overlay, make sure the score is below the threshold (otherwise, ghost will not show)
+# 7. Output video will be in Output/output_Dicte_Jab_Input_debug.mp4
+
+# WORKING DEBUG COMMAND (run from BachelorsProject folder):
+python action_recognition.py --source "InputVideo/Jimmy_AxeKick_Input.mp4" --target-technique axe_kick --reference-dir reference_poses --output-path Output/output_Jiimy_Axe_Input.mp4 --disable-video-classifier --no-display
 ```
 
 ## 3) Trainer run with pose visualization video output
@@ -106,19 +117,19 @@ python run_reference_collection_batch.py --preflight-only
 Dry run first:
 
 ```powershell
-python run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance --dry-run
+python DataCollectionScripts/run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance --dry-run
 ```
 
 Run capture:
 
 ```powershell
-python run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance
+python DataCollectionScripts/run_golden_seed_technique.py --technique-key jab --golden-technique-dir Jab --ref-stance-start-threshold 0.16 --ref-stance-end-threshold 0.16 --ref-stance-peak-threshold 0.22 --ref-stance-min-frames 16 --ref-stance-hold-frames 4
 ```
 
 Example for AxeKick:
 
 ```powershell
-python run_golden_seed_technique.py --technique-key axe_kick --golden-technique-dir AxeKick
+python DataCollectionScripts/run_golden_seed_technique.py --technique-key axe_kick --golden-technique-dir AxeKick --ref-stance-start-threshold 0.16 --ref-stance-end-threshold 0.16 --ref-stance-peak-threshold 0.22 --ref-stance-min-frames 16 --ref-stance-hold-frames 4
 ```
 
 ## 11) Jab seed-gated batch helper script

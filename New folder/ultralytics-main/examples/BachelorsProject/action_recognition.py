@@ -2964,6 +2964,12 @@ def parse_opt() -> argparse.Namespace:
 
 def main(opt: argparse.Namespace) -> None:
     """Run the action recognition pipeline with parsed command line arguments."""
+    # If run_name is not set, use the base name of the input video (without extension) as default
+    if getattr(opt, 'run_name', None) in (None, ''):
+        source = getattr(opt, 'source', None)
+        if source and not source.isdigit() and not source.startswith('http'):
+            from pathlib import Path
+            opt.run_name = Path(source).stem
     run(**vars(opt))
 
 

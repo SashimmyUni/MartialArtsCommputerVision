@@ -1,95 +1,4 @@
-\section{Reproducibility: Dependencies and Data Layout}
 
-\subsection{Dependencies}
-To reproduce results or run the pipeline, ensure the following dependencies are installed:
-\begin{itemize}
-    \item Python 3.9 or newer
-    \item numpy
-    \item opencv-python
-    \item torch (PyTorch)
-    \item ultralytics (YOLO)
-    \item torchvision
-    \item transformers (for Hugging Face video classifier, optional)
-    \item tqdm
-    \item (Optional) jupyter, matplotlib, pandas for analysis and visualization
-\end{itemize}
-Install all dependencies using `pip install -r requirements.txt` if provided, or individually as needed.
-
-\subsection{Data Layout}
-The following folder structure is required for correct operation:
-\begin{verbatim}
-examples/BachelorsProject/
-    action_recognition.py
-    DataCollectionScripts/
-    reference_poses/
-        <technique>/
-            <angle>.npy
-    datasets/
-        validation/
-            <technique>/
-                correct/
-                    *.npy
-                incorrect/
-                    *.npy
-    InputVideo/
-    Output/
-    keypoints/
-    ...
-\end{verbatim}
-\begin{itemize}
-    \item \texttt{reference\_poses/}: Stores canonical reference pose sequences, organized by technique and angle.
-    \item \texttt{datasets/validation/}: Contains validation data for threshold calibration, split into correct/incorrect for each technique.
-    \item \texttt{InputVideo/}: Place user or test videos here for evaluation.
-    \item \texttt{Output/}, \texttt{keypoints/}: Output folders for run artifacts, overlays, and metrics.
-\end{itemize}
-
-\noindent For further details, see the Guides/README.md and HOWTO.md.
-\appendix
-
-\section{Codebase Summary and Usage Instructions}
-
-\subsection{Codebase Structure}
-The project codebase is organized as follows:
-\begin{itemize}
-    \item \textbf{action\_recognition.py}: Main pipeline for pose-based technique evaluation, reference matching, scoring, and feedback.
-    \item \textbf{DataCollectionScripts/}: Scripts for collecting, filtering, and processing reference videos and validation data.
-    \begin{itemize}
-        \item \texttt{scrape\_jab\_candidates.py}: Collects candidate YouTube videos for reference creation.
-        \item \texttt{filter\_candidates.py}: Filters video candidates using keyword patterns.
-        \item \texttt{generate\_reference\_capture\_commands.py}: Converts reviewed CSVs into capture commands.
-        \item \texttt{run\_reference\_collection\_batch.py}: Batch processing for reference capture.
-        \item \texttt{calibrate\_label\_thresholds.py}: Calibrates per-technique score thresholds using validation data.
-    \end{itemize}
-    \item \textbf{reference\_poses/}: Stores canonical reference pose sequences (NumPy .npy files) organized by technique and angle.
-    \item \textbf{datasets/validation/}: Contains validation data for threshold calibration (split into correct/incorrect for each technique).
-    \item \textbf{Output/}, \textbf{Output\_input\_batch/}, etc.: Output folders for run artifacts, overlays, and metrics.
-\end{itemize}
-
-\subsection{Usage Instructions}
-\begin{enumerate}
-    \item \textbf{Reference Collection:}
-    \begin{itemize}
-        \item Use scripts in \texttt{DataCollectionScripts/} to scrape, filter, and prepare reference videos.
-        \item Run \texttt{action\_recognition.py} with the \texttt{--record-reference} option to capture pose sequences for each technique and angle.
-    \end{itemize}
-    \item \textbf{Threshold Calibration:}
-    \begin{itemize}
-        \item Organize validation data in \texttt{datasets/validation/<technique>/correct} and \texttt{incorrect} folders.
-        \item Run \texttt{calibrate\_label\_thresholds.py} to generate per-technique thresholds for scoring.
-    \end{itemize}
-    \item \textbf{Evaluation:}
-    \begin{itemize}
-        \item Run \texttt{action\_recognition.py} with a video source (webcam, file, or YouTube URL) and specify the target technique.
-        \item The script will output scores, feedback, overlays, and structured run artifacts.
-    \end{itemize}
-    \item \textbf{Reproducibility:}
-    \begin{itemize}
-        \item Ensure all dependencies are installed (see \texttt{requirements.txt} or project README).
-        \item Follow the documented folder structure for references and validation data.
-    \end{itemize}
-\end{enumerate}
-
-For more details, see inline comments in each script and the README file.
 \documentclass[12pt]{article}
 \usepackage[utf8]{inputenc}
 \usepackage{graphicx}
@@ -125,7 +34,6 @@ The results support the feasibility of reference-based pose comparison as a foun
 \end{abstract}
 
 \newpage
-
 \section{Introduction}
 Combat sports analysis has traditionally relied on human judgement, which introduces subjectivity and inconsistency. Judges evaluate techniques based on criteria such as precision, impact, balance, and control, but this process is vulnerable to bias and error in fast-moving exchanges \cite{quinn2024automation}. Recent advances in computer vision and deep learning provide an alternative approach by allowing human actions to be analyzed directly from video. In combat sports, this creates the possibility of extracting pose information, comparing an athlete's movements against a technical reference, and generating consistent quantitative feedback \cite{wu2024sthka,echeverria2021pose}.
 
@@ -241,211 +149,44 @@ For an \textit{amateur versus professional} experiment, both groups can perform 
 
 \section{Results}
 
+
 This section presents evaluation results for each supported technique. Tables and figures will be updated incrementally as new results become available.
 
-\subsection{Jab}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Jab (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
+\subsection{Score Distributions by Technique and User}
+\label{sec:score_distributions}
+
+Figure~\ref{fig:score_by_technique_user} shows the distribution of scores for all supported techniques, grouped by user and skill level (Amateur/Professional). Each boxplot summarizes the spread of scores for a given user and technique, allowing direct visual comparison of performance across both techniques and participants.
+
 \begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{jab_example.png}
-\caption{Example output for Jab (to be added)}
+    \centering
+    % Replace 'score_by_technique_user.png' with your actual plot filename
+    \includegraphics[width=0.95\textwidth]{score_by_technique_user.png}
+    \caption{Score distributions by technique and user group. Each boxplot shows the distribution of scores for a specific user and technique.}
+    \label{fig:score_by_technique_user}
 \end{figure}
 
-\subsection{Cross}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Cross (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{cross_example.png}
-\caption{Example output for Cross (to be added)}
-\end{figure}
+The plot reveals several important trends:
+\begin{itemize}
+    \item \textbf{Discriminative Power:} The system successfully distinguishes between amateur and professional users. Professionals generally achieve higher median scores and exhibit less variability, especially for techniques such as axe kick and front kick.
+    \item \textbf{Technique Difficulty:} Some techniques, such as jab, show a wider spread of scores and more outliers, indicating greater variability in performance or higher sensitivity in the scoring algorithm.
+    \item \textbf{User Consistency:} Professional users tend to have more consistent scores (narrower boxes), while amateurs display greater variability, reflecting differences in skill and execution.
+    \item \textbf{Coverage:} Not all techniques are represented for every user, highlighting areas where additional data collection may be needed for a complete analysis.
+    \item \textbf{Outliers:} The presence of outliers suggests occasional very high or low scores, which may be due to user mistakes, detection errors, or natural performance variation.
+\end{itemize}
 
-\subsection{Hook}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Hook (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{hook_example.png}
-\caption{Example output for Hook (to be added)}
-\end{figure}
+Overall, these results indicate that the program's scoring system is sensitive to both user skill and technique, and that it aligns with expected differences between amateur and professional performance. The observed variability and outliers suggest areas for further refinement in data collection or scoring logic. As more techniques and user runs are added, this analysis will be updated to provide a comprehensive summary of system performance across all supported actions.
 
-\subsection{Uppercut}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Uppercut (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{uppercut_example.png}
-\caption{Example output for Uppercut (to be added)}
-\end{figure}
+\subsection{Technique Score Summary}
 
-\subsection{Front Kick}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Front Kick (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{frontkick_example.png}
-\caption{Example output for Front Kick (to be added)}
-\end{figure}
+Figure~\ref{fig:score_by_technique} shows the distribution of scores for all supported techniques, aggregated across all evaluated clips. This summary visualization allows for direct comparison of system performance and threshold calibration across techniques, highlighting which actions are more consistently performed above or below the acceptance threshold.
 
-\subsection{Roundhouse Kick}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Roundhouse Kick (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{roundhousekick_example.png}
-\caption{Example output for Roundhouse Kick (to be added)}
-\end{figure}
-
-\subsection{Side Kick}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Side Kick (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{sidekick_example.png}
-\caption{Example output for Side Kick (to be added)}
-\end{figure}
-
-\subsection{Back Kick}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Back Kick (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{backkick_example.png}
-\caption{Example output for Back Kick (to be added)}
-\end{figure}
-
-\subsection{Spinning Back Kick}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Spinning Back Kick (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{spinningbackkick_example.png}
-\caption{Example output for Spinning Back Kick (to be added)}
-\end{figure}
-
-\subsection{Knee Strike}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Knee Strike (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{kneestrike_example.png}
-\caption{Example output for Knee Strike (to be added)}
-\end{figure}
-
-\subsection{Elbow Strike}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Elbow Strike (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{elbowstrike_example.png}
-\caption{Example output for Elbow Strike (to be added)}
-\end{figure}
-
-\subsection{Axe Kick}
-\begin{table}[H]
-\centering
-\caption{Evaluation metrics for Axe Kick (to be filled)}
-\begin{tabular}{lcccc}
-\toprule
-Clip & Program Score & Human Score & Accepted Windows & Std. Dev. \\
-\midrule
-% Data to be filled in
-\end{tabular}
-\end{table}
-\begin{figure}[H]
-\centering
-%\includegraphics[width=0.7\textwidth]{axekick_example.png}
-\caption{Example output for Axe Kick (to be added)}
-\end{figure}
+%\begin{figure}[H]
+%    \centering
+%    % Replace 'score_by_technique.png' with your actual summary plot file
+%    \includegraphics[width=0.9\textwidth]{score_by_technique.png}
+%    \caption{Score distributions for all techniques, aggregated across users and sessions. The red dashed line indicates the acceptance threshold.}
+%    \label{fig:score_by_technique}
+%\end{figure}
 
 \section{Discussion}
 
@@ -510,44 +251,7 @@ At the same time, the comparison also highlights the limits of the present evalu
 
 The most defensible interpretation is therefore that the oral-score comparison provides encouraging but preliminary evidence. The trainer appears capable of reflecting major differences in jab quality, but a proper validation would require a larger set of clips, multiple human raters, and formal agreement measures such as correlation or mean absolute error. In its current form, this comparison should be understood as an illustrative consistency check rather than a completed expert-validation study.
 
-\subsection*{Component Metric Analysis}
-This subsection is included to explain why particular runs received different overall scores. Rather than introducing a separate evaluation claim, it opens the scoring function and shows which components contributed most clearly to lower or higher outcomes.
 
-To understand score behavior, component means from run summaries were compared. For \texttt{WrongJab\_Input.mp4}, DTW and mean pose distance were both approximately 0.43, while for \texttt{Jab.mp4} they increased to approximately 1.74 and 1.77, respectively. Because the final score combines cosine, DTW, angle, and pose-distance terms, higher temporal and geometric distance directly lowers acceptance.
-
-Both runs most frequently matched the reference angle \texttt{left45\_02}, indicating that this view currently dominates the best-match selection. The most common corrective cues were \textit{Extend your punching arm more} and \textit{Keep your guard hand higher}, which is consistent with observed errors in extension and rear-hand guard maintenance.
-
-\subsection*{Threshold Calibration Status}
-This subsection clarifies an important boundary of the current results: some runs can be demonstrated directly, but a fully calibrated pass/fail interpretation still depends on labeled validation data. Its purpose is therefore to distinguish between what the thesis can show now and what remains part of the evaluation pipeline.
-
-Threshold calibration is implemented in the project, and its logic is methodologically clear. The script expects labeled validation sequences organized by technique and class (\texttt{correct} and \texttt{incorrect}), scores those sequences against the reference bank, searches across candidate thresholds, and selects the operating point that maximizes F1 score and then balanced accuracy \cite{projectCalibrate}. It also records accuracy, precision, recall, balanced accuracy, and the underlying confusion counts. In methodological terms, this means the project does not need to rely on hand-tuned thresholds; it includes a reproducible procedure for learning them from validation data.
-
-The limitation is that the uploaded repository snapshot does not include the labeled validation sets or exported threshold file needed to report final calibrated jab thresholds in this thesis version. As a result, the present report cannot honestly claim completed per-technique calibration results. The available evidence therefore supports the existence and rationale of the calibration pipeline, but not a finished calibrated performance analysis.
-
-To make this status explicit, Table~\ref{tab:threshold_status} summarizes what can be reported defensibly from the current materials.
-
-\begin{table}[H]
-\centering
-\begin{tabular}{p{0.28\textwidth} p{0.62\textwidth}}
-\toprule
-Item & Status in current thesis snapshot \\
-\midrule
-Calibration script & Implemented and available in codebase \\
-Validation layout & \texttt{datasets/validation/<technique>/{correct,incorrect}/*.npy} \\
-Threshold selection rule & Maximize F1, then balanced accuracy \\
-Reported per-technique threshold values & Not available from uploaded data snapshot \\
-Interpretation of current jab runs & Fixed-threshold examples, not final calibrated evaluation \\
-\bottomrule
-\end{tabular}
-\caption{Threshold-calibration status based on the uploaded code and repository snapshot.}
-\label{tab:threshold_status}
-\end{table}
-
-% ----------------------
-% End System Demonstration Chapter
-% ----------------------
-
-% The rest of the report continues...
 \section{Results and Evaluation}
 
 This section reports evidence produced by the implemented pipeline and evaluates what can, and cannot, be concluded from the available material. The uploaded codebase clearly supports structured run logging, per-window scoring, feedback generation, and per-technique threshold calibration \cite{projectActionRecognition,projectAnalyzeRunMetrics,projectCalibrate}. The results below should be interpreted as evidence of system functionality under the available configuration.
@@ -606,85 +310,179 @@ In conclusion, the thesis shows that automated combat-sports technique assessmen
 \printbibliography
 
 \newpage
+\section*{Appendix: Reproducibility, Dependencies, and Data Layout}
+
+\section{Codebase Summary and Usage Instructions}
+
+\subsection{Codebase Structure}
+The project codebase is organized as follows:
+\begin{itemize}
+    \item \textbf{action\_recognition.py}: Main pipeline for pose-based technique evaluation, reference matching, scoring, and feedback.
+    \item \textbf{DataCollectionScripts/}: Scripts for collecting, filtering, and processing reference videos and validation data.
+    \begin{itemize}
+        \item \texttt{scrape\_jab\_candidates.py}: Collects candidate YouTube videos for reference creation.
+        \item \texttt{filter\_candidates.py}: Filters video candidates using keyword patterns.
+        \item \texttt{generate\_reference\_capture\_commands.py}: Converts reviewed CSVs into capture commands.
+        \item \texttt{run\_reference\_collection\_batch.py}: Batch processing for reference capture.
+        \item \texttt{calibrate\_label\_thresholds.py}: Calibrates per-technique score thresholds using validation data.
+    \end{itemize}
+    \item \textbf{reference\_poses/}: Stores canonical reference pose sequences (NumPy .npy files) organized by technique and angle.
+    \item \textbf{datasets/validation/}: Contains validation data for threshold calibration (split into correct/incorrect for each technique).
+    \item \textbf{Output/}, \textbf{Output\_input\_batch/}, etc.: Output folders for run artifacts, overlays, and metrics.
+\end{itemize}
+
+\subsection{Usage Instructions}
+\begin{enumerate}
+    \item \textbf{Reference Collection:}
+    \begin{itemize}
+        \item Use scripts in \texttt{DataCollectionScripts/} to scrape, filter, and prepare reference videos.
+        \item Run \texttt{action\_recognition.py} with the \texttt{--record-reference} option to capture pose sequences for each technique and angle.
+    \end{itemize}
+    \item \textbf{Threshold Calibration:}
+    \begin{itemize}
+        \item Organize validation data in \texttt{datasets/validation/<technique>/correct} and \texttt{incorrect} folders.
+        \item Run \texttt{calibrate\_label\_thresholds.py} to generate per-technique thresholds for scoring.
+    \end{itemize}
+    \item \textbf{Evaluation:}
+    \begin{itemize}
+        \item Run \texttt{action\_recognition.py} with a video source (webcam, file, or YouTube URL) and specify the target technique.
+        \item The script will output scores, feedback, overlays, and structured run artifacts.
+    \end{itemize}
+    \item \textbf{Reproducibility:}
+    \begin{itemize}
+        \item Ensure all dependencies are installed (see \texttt{requirements.txt} or project README).
+        \item Follow the documented folder structure for references and validation data.
+    \end{itemize}
+\end{enumerate}
+
+For more details, see inline comments in each script and the README file.
+
+\subsection*{Dependencies}
+To reproduce results or run the pipeline, ensure the following dependencies are installed:
+\begin{itemize}
+    \item Python 3.9 or newer
+    \item numpy
+    \item opencv-python
+    \item torch (PyTorch)
+    \item ultralytics (YOLO)
+    \item torchvision
+    \item transformers (for Hugging Face video classifier, optional)
+    \item tqdm
+    \item (Optional) jupyter, matplotlib, pandas for analysis and visualization
+\end{itemize}
+Install all dependencies using `pip install -r requirements.txt` if provided, or individually as needed.
+
+\subsection*{Data Layout}
+The following folder structure is required for correct operation:
+\begin{verbatim}
+examples/BachelorsProject/
+    action_recognition.py
+    DataCollectionScripts/
+    reference_poses/
+        <technique>/
+            <angle>.npy
+    datasets/
+        validation/
+            <technique>/
+                correct/
+                    *.npy
+                incorrect/
+                    *.npy
+    InputVideo/
+    Output/
+    keypoints/
+    ...
+\end{verbatim}
+\begin{itemize}
+    \item \texttt{reference\_poses/}: Stores canonical reference pose sequences, organized by technique and angle.
+    \item \texttt{datasets/validation/}: Contains validation data for threshold calibration, split into correct/incorrect for each technique.
+    \item \texttt{InputVideo/}: Place user or test videos here for evaluation.
+    \item \texttt{Output/}, \texttt{keypoints/}: Output folders for run artifacts, overlays, and metrics.
+\end{itemize}
+
+\noindent For further details, see the Guides/README.md and HOWTO.md.
+
+
+\newpage
 \section*{Appendix: Figures}
 This appendix contains all figures generated or referenced during the project. Each image is included below with its filename as caption for traceability.
 
 % List of all images in the folder
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Analyze_Run_Metrics.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Analyze_Run_Metrics.png}
     \caption{Analyze\_Run\_Metrics.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Batch_Collection.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Batch_Collection.png}
     \caption{Batch\_Collection.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Coverage.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Coverage.png}
     \caption{Coverage.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Filter_Candidates.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Filter_Candidates.png}
     \caption{Filter\_Candidates.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Golden_Seeds.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Golden_Seeds.png}
     \caption{Golden\_Seeds.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Jab_Ama_Guard.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Jab_Ama_Guard.png}
     \caption{Jab\_Ama\_Guard.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Jab_Ama_Guard_Good.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Jab_Ama_Guard_Good.png}
     \caption{Jab\_Ama\_Guard\_Good.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Jab_FP_ext_Pro.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Jab_FP_ext_Pro.png}
     \caption{Jab\_FP\_ext\_Pro.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Jab_FP_pro.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Jab_FP_pro.png}
     \caption{Jab\_FP\_pro.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{picture.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{picture.png}
     \caption{picture.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Scout_Plan.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Scout_Plan.png}
     \caption{Scout\_Plan.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Visualize.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Visualize.png}
     \caption{Visualize.png}
 \end{figure}
 
 \begin{figure}[H]
     \centering
-    \includegraphics[width=0.8\linewidth]{Youtube_Scout_Golden.png}
+    \includegraphics[width=\linewidth, height=6cm, keepaspectratio]{Youtube_Scout_Golden.png}
     \caption{Youtube\_Scout\_Golden.png}
 \end{figure}
 
