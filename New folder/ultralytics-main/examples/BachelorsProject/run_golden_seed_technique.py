@@ -39,6 +39,21 @@ def _infer_angle_from_filename(file_name: str) -> str | None:
     return None
 
 
+<<<<<<< Updated upstream:New folder/ultralytics-main/examples/BachelorsProject/run_golden_seed_technique.py
+=======
+def _fallback_angle_from_filename(file_name: str) -> str:
+    stem = Path(file_name).stem.lower()
+    slug = re.sub(r"[^a-z0-9]+", "_", stem).strip("_")
+    return slug or "clip"
+
+
+def _fallback_angle_from_filename(file_name: str) -> str:
+    stem = Path(file_name).stem.lower()
+    slug = re.sub(r"[^a-z0-9]+", "_", stem).strip("_")
+    return slug or "clip"
+
+
+>>>>>>> Stashed changes:New folder/ultralytics-main/examples/BachelorsProject/DataCollectionScripts/run_golden_seed_technique.py
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
