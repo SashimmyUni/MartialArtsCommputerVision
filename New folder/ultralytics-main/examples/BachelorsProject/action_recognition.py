@@ -1031,29 +1031,6 @@ def _wrist_return_closure(seq: np.ndarray, conf_thresh: float = 0.2) -> float:
     return float(max(closures))
 
 
-def _stance_cycle_movement_stats(seq: np.ndarray, conf_thresh: float = 0.2) -> tuple[float, float, float]:
-    """Return (peak_dist, end_dist, closure) against the initial stance frame."""
-    if seq.ndim != 3 or seq.shape[0] < 2:
-        return 0.0, 0.0, 0.0
-
-    norm = normalize_pose_sequence(seq, conf_thresh=conf_thresh)
-    anchor = norm[0]
-    dist = np.array([_frame_pose_distance(frame, anchor) for frame in norm], dtype=np.float32)
-    if not np.isfinite(dist).any():
-        return 0.0, 0.0, 0.0
-
-    peak = float(np.nanmax(dist))
-    end_dist = float(dist[-1]) if np.isfinite(dist[-1]) else float(np.nanmean(dist))
-    if not np.isfinite(end_dist):
-        end_dist = peak
-
-    closure = 0.0
-    if peak > 1e-6:
-        closure = 1.0 - (end_dist / peak)
-    closure = float(max(0.0, min(1.0, closure)))
-    return peak, end_dist, closure
-
-
 def _extract_event_centered_window(
     seq: np.ndarray,
     window_len: int,
@@ -1233,9 +1210,6 @@ def _try_record_reference_sequence(
     reference_capture_cooldown_frames: int,
     append_indexed: bool,
     enable_structured_storage: bool,
-    use_simple_cycle_gate: bool = False,
-    simple_cycle_peak_threshold: float = 0.22,
-    simple_cycle_end_threshold: float = 0.16,
 ) -> tuple[bool, int]:
     if reference_capture_cooldown_frames > 0 and last_saved_frame >= 0:
         frames_since_save = frame_counter - last_saved_frame
@@ -1243,38 +1217,19 @@ def _try_record_reference_sequence(
             return False, last_saved_frame
 
     energy = _wrist_motion_energy(pose_seq)
+    if energy < ref_min_motion_energy:
+        print(
+            f"  [ref gate] skip: wrist motion {energy:.3f} < {ref_min_motion_energy} — waiting for active sequence"
+        )
+        return False, last_saved_frame
+
     closure = _wrist_return_closure(pose_seq)
-    cycle_peak = 0.0
-    cycle_end = 0.0
-    cycle_closure = 0.0
-
-    if use_simple_cycle_gate:
-        cycle_peak, cycle_end, cycle_closure = _stance_cycle_movement_stats(pose_seq)
-        if cycle_peak < simple_cycle_peak_threshold:
-            print(
-                f"  [ref gate] skip: cycle peak {cycle_peak:.3f} < {simple_cycle_peak_threshold:.3f} "
-                "— movement too small"
-            )
-            return False, last_saved_frame
-        if cycle_end > simple_cycle_end_threshold:
-            print(
-                f"  [ref gate] skip: cycle return {cycle_end:.3f} > {simple_cycle_end_threshold:.3f} "
-                "— not back to stance yet"
-            )
-            return False, last_saved_frame
-    else:
-        if energy < ref_min_motion_energy:
-            print(
-                f"  [ref gate] skip: wrist motion {energy:.3f} < {ref_min_motion_energy} — waiting for active sequence"
-            )
-            return False, last_saved_frame
-
-        if closure < ref_min_return_closure:
-            print(
-                f"  [ref gate] skip: return closure {closure:.3f} < {ref_min_return_closure} "
-                "— sequence likely misses retraction"
-            )
-            return False, last_saved_frame
+    if closure < ref_min_return_closure:
+        print(
+            f"  [ref gate] skip: return closure {closure:.3f} < {ref_min_return_closure} "
+            "— sequence likely misses retraction"
+        )
+        return False, last_saved_frame
 
     technique_key, angle_key = _split_reference_key(record_reference)
     has_existing_refs = technique_key in references and bool(references[technique_key])
@@ -1318,17 +1273,10 @@ def _try_record_reference_sequence(
 
     gate_text = f"{gate_score:.1f}" if has_existing_refs else "bootstrap"
     seed_text = f", seed={seed_score:.1f}" if has_seed_refs else ""
-    if use_simple_cycle_gate:
-        print(
-            f"saved reference technique '{record_reference}' to: {ref_path} "
-            f"(cycle_peak={cycle_peak:.3f}, cycle_return={cycle_end:.3f}, "
-            f"cycle_closure={cycle_closure:.3f}, gate={gate_text}{seed_text}, frame={frame_counter})"
-        )
-    else:
-        print(
-            f"saved reference technique '{record_reference}' to: {ref_path} "
-            f"(motion={energy:.3f}, closure={closure:.3f}, gate={gate_text}{seed_text}, frame={frame_counter})"
-        )
+    print(
+        f"saved reference technique '{record_reference}' to: {ref_path} "
+        f"(motion={energy:.3f}, closure={closure:.3f}, gate={gate_text}{seed_text}, frame={frame_counter})"
+    )
     if enable_structured_storage:
         _write_reference_meta(
             reference_path=ref_path,
@@ -1820,22 +1768,22 @@ def run(
     trainer_enabled: bool = True,
     record_reference: str | None = None,
     reference_capture_mode: str = "first_valid",
-    reference_sequence_mode: str = "stance_cycle",
+    reference_sequence_mode: str = "fixed",
     reference_capture_buffer_multiplier: int = 3,
     record_reference_max_saves: int = 1,
     reference_capture_cooldown_frames: int = 24,
     auto_exit_after_reference: bool = False,
     reference_search_max_frames: int = 0,
-    ref_min_motion_energy: float = 0.0,
-    ref_min_return_closure: float = 0.0,
-    ref_min_score_gate: float = 0.0,
+    ref_min_motion_energy: float = 0.3,
+    ref_min_return_closure: float = 0.15,
+    ref_min_score_gate: float = 75.0,
     capture_seed_reference_dir: str | None = None,
     capture_seed_min_score: float = 0.0,
     capture_seed_max_score: float = 100.0,
-    ref_stance_start_threshold: float = 0.16,
-    ref_stance_end_threshold: float = 0.16,
-    ref_stance_peak_threshold: float = 0.22,
-    ref_stance_min_frames: int = 16,
+    ref_stance_start_threshold: float = 0.18,
+    ref_stance_end_threshold: float = 0.12,
+    ref_stance_peak_threshold: float = 0.30,
+    ref_stance_min_frames: int = 24,
     ref_stance_hold_frames: int = 4,
     person_selection_mode: str = "most_motion",
     primary_track_hold_frames: int = 15,
@@ -2347,17 +2295,9 @@ def run(
                             if record_reference and can_save_more:
                                 if reference_capture_mode == "best_window":
                                     technique_key, _ = _split_reference_key(record_reference)
-                                    use_simple_cycle_gate = reference_sequence_mode == "stance_cycle"
                                     energy = _wrist_motion_energy(capture_seq)
                                     closure = _wrist_return_closure(capture_seq)
-                                    cycle_peak, cycle_end, cycle_closure = _stance_cycle_movement_stats(capture_seq)
-                                    passes_pre_gate = (
-                                        cycle_peak >= float(ref_stance_peak_threshold)
-                                        and cycle_end <= float(ref_stance_end_threshold)
-                                    ) if use_simple_cycle_gate else (
-                                        energy >= ref_min_motion_energy and closure >= ref_min_return_closure
-                                    )
-                                    if passes_pre_gate:
+                                    if energy >= ref_min_motion_energy and closure >= ref_min_return_closure:
                                         has_existing_refs = technique_key in references and bool(references[technique_key])
                                         passes_gate, gate_score = _passes_reference_score_gate(
                                             capture_seq, references, technique_key, ref_min_score_gate
@@ -2376,19 +2316,16 @@ def run(
                                                 base_score = float(gate_score)
                                             elif has_seed_refs:
                                                 base_score = float(seed_score)
-                                            elif use_simple_cycle_gate:
-                                                base_score = float(min(100.0, cycle_peak * 100.0))
                                             else:
                                                 base_score = float(min(100.0, energy * 100.0))
-                                            closure_bonus = float(cycle_closure) if use_simple_cycle_gate else float(closure)
-                                            selection_score = base_score + 15.0 * closure_bonus
+                                            selection_score = base_score + 15.0 * float(closure)
                                             prev_best = float(best_reference_candidate["selection_score"]) if best_reference_candidate else -1.0
                                             if best_reference_candidate is None or selection_score > prev_best:
                                                 best_reference_candidate = {
                                                     "pose_seq": capture_seq.copy(),
                                                     "frame": frame_counter,
-                                                    "energy": float(cycle_peak if use_simple_cycle_gate else energy),
-                                                    "closure": float(cycle_closure if use_simple_cycle_gate else closure),
+                                                    "energy": float(energy),
+                                                    "closure": float(closure),
                                                     "gate_score": float(gate_score),
                                                     "seed_score": float(seed_score),
                                                     "selection_score": float(selection_score),
@@ -2399,8 +2336,7 @@ def run(
                                                     print(
                                                         f"[debug] best-window updated frame={frame_counter} "
                                                         f"selection={selection_score:.2f} motion={energy:.3f} "
-                                                        f"closure={closure:.3f} cycle_peak={cycle_peak:.3f} "
-                                                        f"cycle_return={cycle_end:.3f} gate={gate_score:.1f} seed={seed_score:.1f}"
+                                                        f"closure={closure:.3f} gate={gate_score:.1f} seed={seed_score:.1f}"
                                                     )
                                 else:
                                     append_indexed = record_reference_max_saves == 0 or record_reference_max_saves > 1
@@ -2421,9 +2357,6 @@ def run(
                                         reference_capture_cooldown_frames=reference_capture_cooldown_frames,
                                         append_indexed=append_indexed,
                                         enable_structured_storage=enable_structured_storage,
-                                        use_simple_cycle_gate=(reference_sequence_mode == "stance_cycle"),
-                                        simple_cycle_peak_threshold=float(ref_stance_peak_threshold),
-                                        simple_cycle_end_threshold=float(ref_stance_end_threshold),
                                     )
                                     if saved_reference:
                                         reference_saved_count += 1
@@ -2816,7 +2749,7 @@ def parse_opt() -> argparse.Namespace:
     parser.add_argument(
         "--reference-sequence-mode",
         type=str,
-        default="stance_cycle",
+        default="fixed",
         choices=["fixed", "event_centered", "stance_cycle"],
         help=(
             "reference candidate extraction mode: 'fixed' uses latest fixed window, "
@@ -2836,26 +2769,26 @@ def parse_opt() -> argparse.Namespace:
     parser.add_argument(
         "--ref-stance-start-threshold",
         type=float,
-        default=0.16,
-        help="stance-cycle mode: pose-distance threshold to mark departure start (default: 0.16)",
+        default=0.18,
+        help="stance-cycle mode: pose-distance threshold to mark departure start (default: 0.18)",
     )
     parser.add_argument(
         "--ref-stance-end-threshold",
         type=float,
-        default=0.16,
-        help="stance-cycle mode: pose-distance threshold to mark return end (default: 0.16)",
+        default=0.12,
+        help="stance-cycle mode: pose-distance threshold to mark return end (default: 0.12)",
     )
     parser.add_argument(
         "--ref-stance-peak-threshold",
         type=float,
-        default=0.22,
-        help="stance-cycle mode: minimum peak movement required (default: 0.22)",
+        default=0.30,
+        help="stance-cycle mode: minimum peak movement required (default: 0.30)",
     )
     parser.add_argument(
         "--ref-stance-min-frames",
         type=int,
-        default=16,
-        help="stance-cycle mode: minimum extracted sequence length (default: 16)",
+        default=24,
+        help="stance-cycle mode: minimum extracted sequence length (default: 24)",
     )
     parser.add_argument(
         "--ref-stance-hold-frames",
@@ -2890,32 +2823,32 @@ def parse_opt() -> argparse.Namespace:
     parser.add_argument(
         "--ref-min-motion-energy",
         type=float,
-        default=0.0,
+        default=0.3,
         dest="ref_min_motion_energy",
         help=(
             "minimum wrist displacement (in shoulder-width units) required before a candidate "
-            "reference sequence is accepted.  Rejects static / idle captures. (default: 0.0)"
+            "reference sequence is accepted.  Rejects static / idle captures. (default: 0.3)"
         ),
     )
     parser.add_argument(
         "--ref-min-return-closure",
         type=float,
-        default=0.0,
+        default=0.15,
         dest="ref_min_return_closure",
         help=(
             "minimum wrist return-closure in [0,1] required for accepted reference capture. "
-            "Higher values prefer full extension+retraction windows. (default: 0.0)"
+            "Higher values prefer full extension+retraction windows. (default: 0.15)"
         ),
     )
     parser.add_argument(
         "--ref-min-score-gate",
         type=float,
-        default=0.0,
+        default=75.0,
         dest="ref_min_score_gate",
         help=(
             "minimum similarity score (0-100) a candidate reference must achieve against "
             "already-stored references for this technique.  Bypassed when no reference exists yet. "
-            "(default: 0.0)"
+            "(default: 75.0)"
         ),
     )
     parser.add_argument(
