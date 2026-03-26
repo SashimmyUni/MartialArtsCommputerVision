@@ -393,8 +393,8 @@ def draw_pose_cv2(
     image: np.ndarray,
     kpts: np.ndarray,
     conf_thres: float = 0.05,
-    joint_color: tuple[int, int, int] = (0, 170, 255),
-    edge_color: tuple[int, int, int] = (0, 120, 230),
+    joint_color: tuple[int, int, int] = (0, 255, 255),
+    edge_color: tuple[int, int, int] = (0, 220, 0),
     joint_radius: int = 4,
     edge_thickness: int = 2,
 ) -> None:
@@ -1520,8 +1520,8 @@ def _draw_reference_ghost(
             overlay,
             ghost_pose,
             conf_thres=0.01,
-            joint_color=(90, 255, 90),
-            edge_color=(40, 220, 40),
+            joint_color=(0, 0, 255),
+            edge_color=(0, 0, 255),
             joint_radius=3,
             edge_thickness=2,
         )
