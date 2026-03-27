@@ -32,14 +32,13 @@ if not all_dfs:
 
 df = pd.concat(all_dfs, ignore_index=True)
 
-# Improved Plot for Clarity
-plt.figure(figsize=(16, 8))  # Wider figure for more space
-sns.boxplot(data=df, x='technique', y='score', hue='user', width=0.6, fliersize=3)
+# Plot
+plt.figure(figsize=(12, 6))
+sns.boxplot(data=df, x='technique', y='score', hue='user')
 plt.title('Score Distributions by Technique (Each User, Grouped)')
 plt.ylabel('Score')
 plt.xlabel('Technique')
-plt.xticks(rotation=20, ha='right')  # Rotate x labels for readability
-plt.legend(title='User', bbox_to_anchor=(1.05, 1), loc='upper left')  # Move legend outside
+plt.legend(title='User')
 plt.tight_layout()
 plt.savefig('score_by_technique_by_user.png')
 plt.show()

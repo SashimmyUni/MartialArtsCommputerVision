@@ -149,50 +149,49 @@ For an \textit{amateur versus professional} experiment, both groups can perform 
 
 \section{Results}
 
-
 This section presents evaluation results for each supported technique. Tables and figures will be updated incrementally as new results become available.
-
-\subsection{Score Distributions by Technique and User}
-\label{sec:score_distributions}
-
-Figure~\ref{fig:score_by_technique_user} shows the distribution of scores for all supported techniques, grouped by user and skill level (Amateur/Professional). Each boxplot summarizes the spread of scores for a given user and technique, allowing direct visual comparison of performance across both techniques and participants.
-
-\begin{figure}[H]
-    \centering
-    % Replace 'score_by_technique_user.png' with your actual plot filename
-    \includegraphics[width=0.95\textwidth]{score_by_technique_user.png}
-    \caption{Score distributions by technique and user group. Each boxplot shows the distribution of scores for a specific user and technique.}
-    \label{fig:score_by_technique_user}
-\end{figure}
-
-The plot reveals several important trends:
-\begin{itemize}
-    \item \textbf{Discriminative Power:} The system successfully distinguishes between amateur and professional users. Professionals generally achieve higher median scores and exhibit less variability, especially for techniques such as axe kick and front kick.
-    \item \textbf{Technique Difficulty:} Some techniques, such as jab, show a wider spread of scores and more outliers, indicating greater variability in performance or higher sensitivity in the scoring algorithm.
-    \item \textbf{User Consistency:} Professional users tend to have more consistent scores (narrower boxes), while amateurs display greater variability, reflecting differences in skill and execution.
-    \item \textbf{Coverage:} Not all techniques are represented for every user, highlighting areas where additional data collection may be needed for a complete analysis.
-    \item \textbf{Outliers:} The presence of outliers suggests occasional very high or low scores, which may be due to user mistakes, detection errors, or natural performance variation.
-\end{itemize}
-
-Overall, these results indicate that the program's scoring system is sensitive to both user skill and technique, and that it aligns with expected differences between amateur and professional performance. The observed variability and outliers suggest areas for further refinement in data collection or scoring logic. As more techniques and user runs are added, this analysis will be updated to provide a comprehensive summary of system performance across all supported actions.
 
 \subsection{Technique Score Summary}
 
 Figure~\ref{fig:score_by_technique} shows the distribution of scores for all supported techniques, aggregated across all evaluated clips. This summary visualization allows for direct comparison of system performance and threshold calibration across techniques, highlighting which actions are more consistently performed above or below the acceptance threshold.
 
-%\begin{figure}[H]
-%    \centering
-%    % Replace 'score_by_technique.png' with your actual summary plot file
-%    \includegraphics[width=0.9\textwidth]{score_by_technique.png}
-%    \caption{Score distributions for all techniques, aggregated across users and sessions. The red dashed line indicates the acceptance threshold.}
-%    \label{fig:score_by_technique}
-%\end{figure}
+
+\subsection{Score Distributions by Technique and User}
+
+\begin{figure}[H]
+    \centering
+    % Replace 'score_distributions_by_technique.png' with your actual plot file
+    \includegraphics[width=0.95\textwidth]{score_distributions_by_technique.png}
+    \caption{Score distributions by technique and user group. Each boxplot shows the spread of scores for a given technique, grouped by user and labeled as (Amateur) or (Professional).}
+    \label{fig:score_by_technique_and_user}
+\end{figure}
+
+Figure~\ref{fig:score_by_technique_and_user} presents the distribution of system-generated scores for each technique, separated by user and group. The boxplots reveal several key findings:
+
+\begin{itemize}
+    \item \textbf{Discriminative Power:} The system distinguishes between amateur and professional users, with professionals generally achieving higher and more consistent scores, especially for techniques like axe kick and front kick.
+    \item \textbf{Technique Variability:} Some techniques, such as jab, show a wider spread of scores, indicating greater variability in performance or higher sensitivity in the scoring algorithm.
+    \item \textbf{Outliers and Consistency:} The presence of outliers suggests occasional detection errors or natural performance variation. Professionals tend to have fewer outliers and narrower score ranges.
+    \item \textbf{Coverage:} Not all users attempted every technique, as seen by missing boxes for some user-technique combinations.
+\end{itemize}
+
+These results demonstrate that the program’s scoring system is sensitive to both user skill and technique, aligning with the intended design of providing meaningful, technique-specific feedback.
 
 \section{Discussion}
 
 This section will analyze and interpret the results for each technique as they become available. Comparative insights, strengths, weaknesses, and observed trends will be discussed here. (To be updated as results are filled in.)
 
 At a qualitative level, the reported examples are consistent with the intended trainer logic. Windows above threshold are marked as correct, whereas lower-scoring windows trigger corrective feedback and, where configured, ghost-pose guidance. The figure-based jab comparison also serves as a screenshot-based demonstration of the system output, showing the tracked skeleton, bounding box, activity label, and score overlay while visually highlighting differences in extension and guard position across examples. These observations are compatible with the system design, but they remain clip-level observations rather than participant-level findings.
+
+\subsection*{Interpretation of Technique Differences and Score Distributions}
+
+The score distribution plots highlight important differences between techniques. Techniques such as jab exhibit a broader range of scores, which may reflect greater difficulty, more variation in user execution, or increased sensitivity in the scoring logic. In contrast, techniques like axe kick and front kick show professionals consistently outperforming amateurs, suggesting that the system effectively captures skill differences for these actions.
+
+It is important to note that most results achieve relatively high scores. This is partly due to the use of a generic fighting stance as the reference, which is a standard pose for executing most techniques. As a result, the fighting stance may bias the scores upward, making it easier for users to achieve high marks when starting from this position.
+
+However, when the program is used to interpret techniques performed outside of a fighting stance, the score and feedback indicators become more reliable and discriminative. Therefore, the mean score in these plots does not fully capture the quality of the technique itself, but is also influenced by the initial stance and reference selection. This should be considered when interpreting the results and comparing across techniques.
+
+Overall, the plots confirm that the system can differentiate between user groups and techniques, but also highlight the need for careful reference selection and further calibration to ensure that scores reflect true technique quality rather than just conformity to a standard pose.
 
 \begin{figure}[h!]
 \centering
@@ -245,7 +244,40 @@ Source clip & Windows & Accepted & Acceptance rate (\%) & Program Score & Traine
 \label{tab:run_level_summary}
 \end{table}
 
+\begin{table}[H]
+\centering
+\resizebox{\textwidth}{!}{
+\begin{tabular}{l l l l r r r r r r r r r r r l l}
+	oprule
+Run ID & Group & User & Technique & Windows & Correct & Acc. (\%) & Mean & Std & Min & Max & Thresh. & DTW & AngleErr & PoseDist & RefAngle & TopFeedback \\
+\midrule
+Albert\_AxeKick & Pro & Albert & AxeKick & 582 & 170 & 29.2 & 64.8 & 9.7 & 48.5 & 85.8 & 70.0 & 1.75 & 7.15 & 1.75 & front\_01 & Good form \\
+Albert\_Cross & Pro & Albert & Cross & 582 & 140 & 24.1 & 58.2 & 12.6 & 36.0 & 83.4 & 70.0 & 1.80 & 26.1 & 1.84 & cross2\_01 & Extend your punching arm more \\
+Albert\_Elbow & Pro & Albert & Elbow & 555 & 93 & 16.8 & 59.8 & 9.9 & 44.2 & 85.4 & 70.0 & 1.72 & 16.7 & 1.73 & side\_left\_01 & Slow down and focus on form \\
+Albert\_FrontKick & Pro & Albert & FrontKick & 266 & 144 & 54.1 & 68.0 & 11.4 & 47.7 & 86.2 & 70.0 & 1.45 & 11.7 & 1.46 & fronkick3\_01 & Good form \\
+Albert\_Hook & Pro & Albert & Hook & 581 & 112 & 19.3 & 57.4 & 10.4 & 39.3 & 84.7 & 70.0 & 1.97 & 21.5 & 1.99 & behind\_01 & Extend your punching arm more \\
+Albert\_Jab & Pro & Albert & Jab & 315 & 196 & 62.2 & 69.6 & 9.6 & 45.9 & 84.3 & 70.0 & 1.02 & 20.0 & 1.07 & jab3\_01 & Extend your punching arm more \\
+Albert\_KneeKick & Pro & Albert & KneeKick & 555 & 138 & 24.9 & 62.2 & 11.4 & 45.6 & 87.8 & 70.0 & 1.45 & 10.0 & 1.45 & knee3\_01 & Slow down and focus on form \\
+Albert\_Uppercut & Pro & Albert & Uppercut & 417 & 113 & 27.1 & 60.8 & 11.2 & 44.6 & 86.2 & 70.0 & 1.62 & 13.6 & 1.67 & uppercut3\_01 & Slow down and focus on form \\
+Dicte\_AxeKick & Ama & Dicte & AxeKick & 1046 & 295 & 28.2 & 62.3 & 10.5 & 33.5 & 84.8 & 70.0 & 1.52 & 9.4 & 1.52 & front\_01 & Good form \\
+Dicte\_Cross & Ama & Dicte & Cross & 780 & 142 & 18.2 & 56.4 & 10.8 & 39.9 & 82.6 & 70.0 & 1.88 & 26.3 & 1.89 & cross2\_01 & Extend your punching arm more \\
+Dicte\_Elbow & Ama & Dicte & Elbow & 801 & 234 & 29.2 & 61.8 & 10.5 & 44.3 & 85.8 & 70.0 & 1.36 & 14.3 & 1.36 & side\_left\_01 & Slow down and focus on form \\
+Dicte\_FrontKick & Ama & Dicte & FrontKick & 771 & 56 & 7.3 & 53.5 & 10.2 & 30.2 & 85.5 & 70.0 & 2.48 & 21.0 & 2.48 & left45\_01 & Extend the kicking leg more \\
+Dicte\_Hook & Ama & Dicte & Hook & 826 & 226 & 27.4 & 60.3 & 11.1 & 39.8 & 82.6 & 70.0 & 1.78 & 21.5 & 1.82 & hook5\_01 & Extend your punching arm more \\
+Dicte\_KneeKick & Ama & Dicte & KneeKick & 869 & 307 & 35.3 & 63.8 & 13.5 & 38.7 & 87.7 & 70.0 & 1.80 & 13.9 & 1.80 & knee3\_01 & Good form \\
+Dicte\_Uppercut & Ama & Dicte & Uppercut & 762 & 98 & 12.9 & 58.5 & 9.2 & 39.2 & 84.7 & 70.0 & 1.74 & 18.1 & 1.76 & side\_right\_01 & Slow down and focus on form \\
+Jimmy\_AxeKick & Pro & Jimmy & AxeKick & 1033 & 310 & 30.0 & 58.7 & 20.7 & 32.8 & 93.4 & 70.0 & 1.45 & 25.9 & 1.46 & axekick2\_01 & Extend the kicking leg more \\
+Jimmy\_Cross & Pro & Jimmy & Cross & 804 & 125 & 15.5 & 56.9 & 10.9 & 40.2 & 85.4 & 70.0 & 1.81 & 19.7 & 1.85 & cross2\_01 & Extend your punching arm more \\
+Jimmy\_FrontKick & Pro & Jimmy & FrontKick & 1540 & 499 & 32.4 & 64.9 & 14.2 & 44.6 & 91.8 & 70.0 & 1.58 & 9.0 & 1.65 & fronkick4\_01 & Extend the kicking leg more \\
+Jimmy\_Hook & Pro & Jimmy & Hook & 548 & 336 & 61.3 & 71.5 & 15.2 & 43.3 & 94.8 & 70.0 & 1.07 & 12.0 & 1.08 & hook3\_01 & Extend your punching arm more \\
+Jimmy\_KneeKick & Pro & Jimmy & KneeKick & 1338 & 344 & 25.7 & 61.0 & 15.9 & 34.0 & 92.6 & 70.0 & 1.79 & 13.7 & 1.80 & right45\_01 & Extend the kicking leg more \\
+Jimmy\_Uppercut & Pro & Jimmy & Uppercut & 813 & 90 & 11.1 & 53.9 & 12.5 & 33.1 & 87.7 & 70.0 & 2.15 & 21.6 & 2.20 & side\_right\_01 & Slow down and focus on form \\
+
 The comparison shows that the system captures the broad ordering of performance quality in the small set of examples considered. The professional jab clip receives the highest program score and also one of the highest human scores, while the clearly weaker jab clip receives the lowest program score. Similarly, the amateur and intermediate examples occupy the middle range in both human and program assessment. This indicates that the scoring pipeline is sensitive to meaningful differences in execution quality rather than producing arbitrary scores.
+}
+\caption{Expanded run-level summary from structured metrics logs. Each row summarizes a run by user, group, technique, and key metrics.}
+\label{tab:run_level_summary}
+\end{table}
 
 At the same time, the comparison also highlights the limits of the present evaluation. The gap between \texttt{WrongJab.mp4} and its human score shows that the system can still diverge substantially from expert judgement in individual cases. This is important because it suggests that some technical flaws may be weighted differently by the automated similarity metrics than by a human evaluator. In other words, the current results support partial agreement in relative ranking, but they do not yet justify strong claims about precise score agreement.
 
