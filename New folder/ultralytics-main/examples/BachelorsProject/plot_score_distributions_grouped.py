@@ -32,14 +32,39 @@ if not all_dfs:
 
 df = pd.concat(all_dfs, ignore_index=True)
 
-# Plot
-plt.figure(figsize=(12, 6))
-sns.boxplot(data=df, x='technique', y='score', hue='user')
-plt.title('Score Distributions by Technique (Each User, Grouped)')
+# Plot with group color and hatch for Amateur
+plt.figure(figsize=(14, 7))
+
+
+# Assign a unique color to each user
+import itertools
+user_list = df['user'].unique()
+color_palette = sns.color_palette('tab10', n_colors=len(user_list))
+user_palette = {user: color for user, color in zip(user_list, color_palette)}
+
+ax = sns.boxplot(
+    data=df,
+    x='technique',
+    y='score',
+    hue='user',
+    palette=user_palette
+)
+
+
+# Add diagonal hatching only to Dicte and Emil
+for patch, user in zip(ax.artists, user_list):
+    if 'Dicte' in user or 'Emil' in user:
+        patch.set_hatch('//')  # Diagonal stripes
+    else:
+        patch.set_hatch('')   # No hatch
+    patch.set_edgecolor('k')
+    patch.set_linewidth(1.5)
+
+plt.title('Score Distributions by Technique')
 plt.ylabel('Score')
 plt.xlabel('Technique')
-plt.legend(title='User')
+plt.legend(title='User', bbox_to_anchor=(1.05, 1), loc='upper left')
 plt.tight_layout()
-plt.savefig('score_by_technique_by_user.png')
+plt.savefig('score_by_technique_group_user.png')
 plt.show()
-print('Plot saved as score_by_technique_by_user.png')
+print('Plot saved as score_by_technique_group_user.png')
