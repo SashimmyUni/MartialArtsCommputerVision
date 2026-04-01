@@ -1,0 +1,44 @@
+# Martial Arts Computer Vision: 5-Minute Defense Bulletpoints
+
+- **Introduction**
+  - Name, project title: Reference-based martial arts coaching with computer vision
+  - Motivation: democratize expert feedback, make training accessible
+
+- **System Overview**
+  - Input: video (file, webcam, YouTube)
+  - Pose estimation: YOLO model extracts 2D keypoints per frame
+  - Reference library: expert pose sequences for each technique (multiple angles/performers)
+  - Action recognition: optional video classifier for technique labeling
+  - Output: feedback and score based on similarity to references
+
+- **Technical Pipeline**
+  - Pose normalization: body-centric, removes translation/scale
+  - Temporal alignment: DTW aligns user and reference in time (handles speed differences)
+  - Similarity metrics:
+    - Cosine similarity (overall shape)
+    - DTW distance (spatial difference after alignment)
+    - Mean angle error (key joint angles)
+    - Mean pose distance (average joint distance)
+  - Score aggregation: [0, 100], weighted sum (35% cosine, 25% DTW, 25% angle, 15% pose dist)
+  - Mirroring: compares both original and mirrored user sequence, uses best
+  - Reference selection: always uses best-matching reference for each comparison
+
+- **Feedback Generation**
+  - Numerical score + qualitative suggestions (e.g., "extend arm more")
+  - Interpretable, actionable feedback
+
+- **Strengths**
+  - Robust to speed, size, camera position
+  - Handles missing/noisy keypoints
+  - Flexible: supports multiple references, easy to extend to 3D/other sports
+
+- **Practical Impact**
+  - Makes expert feedback accessible
+  - Lays groundwork for similar systems in sports/rehab
+
+- **Conclusion**
+  - Modern computer vision + sequence alignment = meaningful, automated feedback
+  - Ready for questions
+
+---
+**Tip:** Use these as checkpoints to keep your presentation clear, concise, and on track.

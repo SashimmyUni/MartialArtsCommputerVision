@@ -1,0 +1,64 @@
+# Martial Arts Computer Vision: Technical Cheat Sheet
+
+## Project Overview
+- Automated martial arts coaching using pose estimation and action recognition.
+- Compares user performance to expert reference sequences for feedback.
+
+## System Architecture
+- **Input:** Video (file, webcam, YouTube)
+- **Pose Estimation:** Ultralytics YOLO model extracts 2D keypoints per frame.
+- **Reference Library:** Canonical pose sequences for each technique, possibly from multiple angles.
+- **Action Recognition:** Optional video classifier (TorchVision/HuggingFace) for technique labeling.
+- **Comparison & Feedback:** User pose sequence is compared to references, and feedback is generated.
+
+## Key Algorithms & Metrics
+- **Pose Normalization:**
+  - Removes translation and scale effects.
+  - All poses are centered and scaled to a body-centric coordinate system.
+- **Temporal Alignment:**
+  - Uses Dynamic Time Warping (DTW) to align user and reference sequences, handling speed differences.
+- **Similarity Metrics:**
+  - **Cosine Similarity:** Measures overall “shape” similarity between sequences.
+  - **DTW Distance:** Measures spatial difference after optimal temporal alignment.
+  - **Mean Angle Error:** Compares key joint angles (e.g., elbow, knee) over time.
+  - **Mean Pose Distance:** Average Euclidean distance between corresponding joints.
+- **Score Aggregation:**
+  - Each metric is mapped to a [0, 100] score.
+  - Final score is a weighted sum:
+    - 35% Cosine, 25% DTW, 25% Angle, 15% Pose Distance.
+- **Reference Selection:**
+  - System compares user sequence to all available references for a technique.
+  - The best-matching reference (highest score) is used for feedback.
+
+## Workflow
+- Collect reference poses (expert recordings).
+- User performs technique; system captures and processes video.
+- User sequence is normalized, aligned, and compared to references.
+- Score and feedback are generated based on similarity.
+
+## Technical Details
+- **Normalization:**
+  - Uses only high-confidence keypoints.
+  - Handles missing or noisy data robustly.
+- **DTW:**
+  - Aligns sequences of different lengths and speeds.
+  - Frame-to-frame comparison is always after DTW alignment.
+- **Mirroring:**
+  - Compares both original and mirrored user sequences; uses the best match.
+- **Multiple People:**
+  - Tracks all, but scores the most active person by default.
+- **Extensibility:**
+  - Can be adapted for 3D pose or other sports by updating pose extraction and metrics.
+
+## Key Strengths
+- Robust to speed, size, and camera position differences.
+- Flexible reference library (multiple performers, angles).
+- Interpretable metrics and feedback.
+
+## Example Usage
+- Activate environment: `.venv\Scripts\Activate.ps1`
+- Run main script: `python .../action_recognition.py --source <video>`
+- Analyze results: `python .../plot_score_distributions_grouped.py`
+
+---
+**Tip:** Use this sheet to quickly explain the technical flow, justify design choices, and answer technical questions during your defense.
