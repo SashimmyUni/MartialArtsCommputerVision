@@ -1,0 +1,458 @@
+# Martial Arts Trainer HOWTO
+
+This guide is written for project handover and supervisor presentation.
+It explains:
+
+- what the system does end-to-end,
+- how data collection and reference capture work,
+- how scoring against references is computed,
+- how user correction is visualized,
+- where the main bottlenecks are and how a supervisor can help.
+
+---
+
+## 1. Project Objective
+
+Build a reference-based martial arts coaching pipeline that can:
+
+1. Track human pose from webcam/video.
+2. Compare user motion against canonical reference sequences per technique and camera angle.
+3. Output a score and actionable feedback.
+4. Show visual correction cues (target ghost pose + correction arrows).
+
+This is a template-matching trainer, not a fully supervised end-to-end classifier.
+
+---
+
+## 2. Folder Structure (What Matters Most)
+
+Root for this project is the repository root itself. All script paths resolve
+relative to it, so commands run from there without any `cd` into a subfolder.
+
+Important files and folders:
+
+- `action_recognition.py`
+  - Core engine: tracking, pose extraction, scoring, feedback, live overlays, reference recording.
+- `scripts/run_reference_collection_batch.py`
+  - Batch orchestrator for overnight or large-scale reference capture from the CSV plan.
+- `visualize_reference_pose.py`
+  - Renders saved `.npy` references into preview videos for quality inspection.
+- `generate_reference_capture_commands.py`
+  - Builds capture command plans from candidate sources.
+- `run_golden_seed_technique.py`
+  - Runs all local Golden Seeds files for one technique and saves indexed references automatically.
+- `reference_poses/`
+  - Canonical reference library and plan files.
+- `reference_poses/generated_capture_plan_all_labels.csv`
+  - Master capture plan (one row per technique-angle job, with source URLs).
+- `reference_poses/<technique>/<angle>.npy`
+  - Saved reference motion windows.
+- `data/runs/<run_id>/`
+  - Structured outputs: config, metrics.csv, tracks, summaries.
+- `keypoints/`
+  - Raw saved per-track keypoint sequences from runs.
+
+Reference naming model:
+
+- Technique folder: snake_case (example: `front_kick`)
+- Angle file: `front`, `left45`, `right45`, `side` (+ optional indexed versions like `right45_03.npy`)
+
+---
+
+## 3. End-to-End Pipeline
+
+### Phase A: Build reference library
+
+- Use `run_reference_collection_batch.py` (preferred for scale) or manual `action_recognition.py --record-reference`.
+- Candidate windows are filtered by quality gates.
+- Accepted windows are stored as `.npy` reference sequences.
+
+### Phase B: Validate references
+
+- Use `visualize_reference_pose.py` to inspect each saved sequence.
+- Remove and recapture references that are static, incomplete, or detection-corrupted.
+
+### Phase C: Run trainer/inference
+
+- Input can be webcam, local video, or YouTube URL.
+- For each active track, a pose sequence window is compared to all available angle references of the target technique.
+- Best angle is selected automatically.
+- Final score + text feedback + visual correction overlay are generated.
+
+---
+
+## 4. How Scripts Work
+
+## 4.1 `run_reference_collection_batch.py`
+
+Purpose:
+
+- Reads `generated_capture_plan_all_labels.csv`.
+- Executes all rows with `command_ready=yes`.
+- For each technique-angle row, tries to save up to `examples_per_angle` references.
+
+Key behavior:
+
+- Preflight validates number of distinct source URLs.
+- Skips rows that already have enough examples (unless `--overwrite`).
+- Runs child capture calls to `action_recognition.py` in reference-capture mode.
+- Applies cooldown between jobs to reduce sustained load.
+
+Useful flags:
+
+- `--examples-per-angle` (default 4)
+- `--overwrite`
+- `--allow-source-reuse`
+- `--num-video-sequence-samples`
+- `--ref-min-return-closure`
+- `--cpu-threads`
+- `--preflight-only`
+
+## 4.2 `action_recognition.py`
+
+Purpose:
+
+- Main runtime for both:
+  - reference capture mode,
+  - live trainer scoring mode.
+
+Core internals:
+
+- Loads references with `load_reference_pose_library()`.
+- Saves references with `save_reference_pose()`.
+- Computes best match via `_best_reference_match()` over all angles in a technique bank.
+- Computes score bundle in `compare_pose_sequence()`.
+- Generates rule-based textual advice in `generate_feedback()`.
+- Generates correction visuals with `_build_reference_overlay()` and `_draw_reference_ghost()`.
+
+## 4.3 `visualize_reference_pose.py`
+
+Purpose:
+
+- QA tool for references.
+- Converts `.npy` keypoint sequences into skeleton video previews.
+- Helps detect bad captures before they affect scoring.
+
+---
+
+## 5. Data Collection Workflow (Reference Capture)
+
+## 5.0 Golden Seeds folder-first collection (fast local workflow)
+
+Use this when you already have local curated clips under `reference_poses/Golden_Seeds/<TechniqueName>/`.
+
+1. Put clips in one folder per technique (example: `reference_poses/Golden_Seeds/FightingStance/`).
+2. Run the per-technique batch script:
+  - `python scripts/run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance --dry-run`
+  - `python scripts/run_golden_seed_technique.py --technique-key fighting_stance --golden-technique-dir FightingStance`
+3. The script infers angle from each file name and saves outputs to `reference_poses/fighting_stance/` as indexed files:
+  - `front_01.npy`, `front_02.npy`, `left45_01.npy`, `behind_01.npy`, etc.
+4. Inspect results with `visualize_reference_pose.py` and re-run with `--overwrite` if needed.
+
+## 5.1 Plan-driven collection
+
+1. Maintain source URLs per row in `generated_capture_plan_all_labels.csv`.
+2. Launch batch runner.
+3. Batch captures references and writes `.npy` files by technique/angle.
+4. Review with preview script.
+5. Recapture weak references with stricter gates.
+
+## 5.2 Candidate acceptance gates
+
+During capture, each candidate window must pass:
+
+- Motion gate: `ref_min_motion_energy`
+  - Rejects near-static windows.
+- Return closure gate: `ref_min_return_closure`
+  - Enforces extension + retraction patterns.
+- Score gate: `ref_min_score_gate`
+  - After bootstrap, candidate should still resemble existing references for that technique.
+- Optional Golden Seed variation band: `capture_seed_min_score` + `capture_seed_max_score`
+  - Candidate must stay close enough to the seed bank to remain the same technique,
+    but below the upper bound so it is not accepted as a near-duplicate of the Golden Seed.
+
+Capture mode options:
+
+- `first_valid`: save first window that passes gates.
+- `best_window`: scan and choose best valid window (preferred quality).
+
+---
+
+## 6. How Reference vs Actual Pose Is Calculated
+
+Input:
+
+- User sequence window and one reference sequence.
+
+Normalization:
+
+- Poses are normalized per frame to body-centered coordinates for scale/translation robustness.
+
+Alignment and orientation:
+
+- Sequences are resampled to same length.
+- Both plain and mirrored user sequence are compared.
+- The better orientation is selected (`use_mirror`).
+
+Metrics in `compare_pose_sequence()`:
+
+- Cosine pose similarity
+- DTW pose distance (temporal alignment)
+- Technique-specific joint angle error
+- Mean pose distance
+
+Final score (0 to 100):
+
+`final_score = 0.35*cosine_score + 0.25*dtw_score + 0.25*angle_score + 0.15*pose_dist_score`
+
+Where each sub-score is converted into a 0 to 100 scale before fusion.
+
+Best-angle selection:
+
+- `_best_reference_match()` evaluates all references of a technique and chooses max score.
+
+Correct/incorrect decision:
+
+- Compare score to threshold (`trainer_score_threshold`, default 70, optionally per-technique overrides).
+
+---
+
+## 7. How Correction Is Indicated to the User
+
+Current correction UX has three layers:
+
+1. Compact info panel
+- Technique and matched reference angle
+- Current score vs threshold
+- Short text feedback
+
+2. Ghost target pose (when incorrect)
+- A reference frame is projected into current user image coordinates.
+- Drawn as semi-transparent skeleton overlay.
+
+3. Correction arrows
+- Focus joints (arms for punches, legs for kicks) are ranked by largest normalized error.
+- Top errors are shown with arrows from current joint position to target joint position.
+
+Interpretation:
+
+- Arrow direction = where that joint should move.
+- Ghost skeleton = desired pose shape in the current frame context.
+
+---
+
+## 8. Recommended Demo Flow for Supervisor Meeting
+
+Use this order to clearly communicate project value:
+
+1. Show folder structure and artifacts
+- `reference_poses/` and `data/runs/` organization.
+
+2. Show one reference preview
+- Demonstrates what is considered canonical motion.
+
+3. Run one trainer video test
+- Show score, matched angle, and correction overlay behavior.
+
+4. Open `metrics.csv` from that run
+- Show quantitative scoring trace over time.
+
+5. Explain bottlenecks and next research/engineering steps
+- Section 9 below.
+
+---
+
+## 9. Current Bottlenecks (Supervisor Help Needed)
+
+This is the key discussion section.
+
+## 9.1 Reference quality and timing (highest priority)
+
+Observed issue:
+
+- Some captures still save windows that are too static, mistimed, or not the true peak action moment.
+
+Why this matters:
+
+- Reference quality directly limits trainer reliability.
+- A weak reference can bias best-angle matching and feedback quality.
+
+Supervisor support requested:
+
+- Define stricter acceptance criteria per technique (especially kicks).
+- Help design an annotation protocol for "true contact/extension" frame windows.
+- Approve a small manually curated gold-standard subset for calibration.
+
+## 9.2 Data diversity and coverage
+
+Observed issue:
+
+- Limited performer diversity, camera setups, and motion styles.
+
+Why this matters:
+
+- Reduced robustness across users and recording conditions.
+
+Supervisor support requested:
+
+- Access to more varied source material and/or controlled recording sessions.
+- Guidance on minimum dataset size per technique-angle pair.
+
+## 9.3 Threshold calibration and evaluation methodology
+
+Observed issue:
+
+- Single global threshold can be suboptimal; techniques differ in score behavior.
+
+Why this matters:
+
+- False negatives/positives vary by technique.
+
+Supervisor support requested:
+
+- Define evaluation protocol (validation set, metrics, acceptance targets).
+- Support per-technique threshold calibration and periodic re-baselining.
+
+## 9.4 Runtime stability of online video sources
+
+Observed issue:
+
+- YouTube stream interruptions can terminate long runs early.
+
+Why this matters:
+
+- Affects overnight automation reliability.
+
+Supervisor support requested:
+
+- Endorse policy to pre-download videos for batch runs.
+- Optionally support local dataset mirroring to avoid stream-side failures.
+
+## 9.5 Compute throughput
+
+Observed issue:
+
+- CPU-only runs are slow for large-scale capture/experimentation.
+
+Why this matters:
+
+- Limits iteration speed for data and model tuning.
+
+Supervisor support requested:
+
+- Access to a GPU workstation/server for batch capture and evaluation.
+
+Update: the trainer scoring core (`_best_reference_match` /
+`compare_pose_sequence` in `action_recognition.py`) was rewritten to cache
+normalized/resampled references at load time and to vectorize DTW/angle-error
+scoring — previously the dominant per-frame cost (a Python-level nested loop
+re-normalizing every reference and computing DTW cell-by-cell, on every scored
+frame). Correctness is verified by `test_scoring_equivalence.py`, which checks
+the optimized scoring against a pinned copy of the original implementation and
+asserts identical results within float tolerance; run it after touching
+anything under the scoring core. Throughput can be measured directly with
+`benchmark_scoring.py` (no video needed — uses the committed
+`keypoints/track_*.npy` files) and, for a full run, with the new `--profile`
+flag (writes `timing.json` with a decode/yolo/scoring/drawing/encode
+breakdown, plus an optional cProfile `.prof`).
+
+New opt-in speed flags on `action_recognition.py` (all default to prior
+behaviour — pass none of these and nothing changes):
+
+- `--imgsz N` — YOLO inference size (default 640).
+- `--detect-stride N` — run YOLO every N frames, reuse the last detection in between.
+- `--score-every N` — run trainer scoring every N eligible ticks; the overlay keeps the last score in between.
+- `--score-topk K` — cosine-prescreen the reference bank and only DTW-score the top K candidates (0 = score the whole bank).
+- `--ref-canonical-len L` — resample every loaded reference to a fixed frame count at load time, shrinking the O(T²) DTW cost per reference (0 = keep native length).
+- `--fast-mode` now actually matches its own help text (previously it left
+  `visualize_pose`/`draw_boxes`/`overlay_pose` on and never touched
+  `skip_frame`, contrary to what it claimed).
+
+`run_reference_collection_batch.py` and `run_inputvideo_batch.ps1` gained a
+`--jobs`/`-Jobs` flag to capture multiple rows/videos concurrently instead of
+one `action_recognition.py` subprocess at a time (each holds its own YOLO
+model + CUDA context, so keep this modest relative to available VRAM).
+`run_inputvideo_batch.ps1` also had a path bug fixed: it was `Set-Location`-ing
+into `scripts/` and then invoking `action_recognition.py` with a
+path relative to that directory, where the script doesn't live — the batch
+never actually ran the trainer.
+
+---
+
+## 10. Practical Commands
+
+Run overnight batch:
+
+```powershell
+python scripts/run_reference_collection_batch.py
+```
+
+Run batch capture using Golden Seed-derived references as a variation band:
+
+```powershell
+python scripts/run_reference_collection_batch.py `
+  --capture-seed-reference-dir reference_poses `
+  --capture-seed-min-score 72 `
+  --capture-seed-max-score 94
+```
+
+Use this after extracting your curated Golden Seeds into `.npy` references. The lower bound keeps new captures aligned with the seed technique, and the upper bound rejects clips that are effectively the same execution again.
+
+Dry-run preflight only:
+
+```powershell
+python scripts/run_reference_collection_batch.py --preflight-only
+```
+
+Manual single reference capture:
+
+```powershell
+python action_recognition.py `
+  --source "https://www.youtube.com/watch?v=VIDEO_ID" `
+  --record-reference "front_kick__right45" `
+  --target-technique front_kick `
+  --reference-capture-mode best_window `
+  --num-video-sequence-samples 20 `
+  --disable-video-classifier --no-display `
+  --auto-exit-after-reference `
+  --reference-search-max-frames 1800 `
+  --ref-min-motion-energy 0.02 `
+  --ref-min-return-closure 0.20 `
+  --ref-min-score-gate 0
+```
+
+Run trainer on webcam:
+
+```powershell
+python action_recognition.py --source 0 --target-technique jab --reference-dir reference_poses
+```
+
+Run trainer on a local video:
+
+```powershell
+python action_recognition.py --source MultipleTest.MOV --target-technique jab --reference-dir reference_poses --output-path output_demo.mp4 --fast-mode --skip-frame 2
+```
+
+Preview one reference:
+
+```powershell
+python scripts/visualize_reference_pose.py --technique front_kick --angle right45
+```
+
+---
+
+## 11. Suggested Near-Term Plan
+
+1. Freeze and review current references by preview quality.
+2. Recapture weakest technique-angle pairs with stricter gates.
+3. Build a small validated benchmark set (correct + common mistakes).
+4. Calibrate per-technique thresholds from benchmark metrics.
+5. Re-run meeting demo with benchmark-backed numbers.
+
+---
+
+If you present only one message to your supervisor:
+
+- The pipeline is already functional and demonstrable.
+- Main risk is reference quality at capture time.
+- Biggest impact support is in curated data protocol, evaluation methodology, and compute/resources for faster iteration.
