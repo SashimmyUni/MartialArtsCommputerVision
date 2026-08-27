@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import cv2
@@ -154,11 +155,26 @@ def _build_parser() -> argparse.ArgumentParser:
             "to maximize saves from reviewed Golden Seeds clips"
         ),
     )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=2,
+        help=(
+            "number of Golden Seeds clips to process concurrently, each spawning its own "
+            "action_recognition.py subprocess with its own YOLO model on the GPU (default: 2). "
+            "Every planned run targets a distinct output file, so this is safe to raise — but each "
+            "subprocess holds its own CUDA context + model in VRAM, so keep it modest. Pass --jobs 1 "
+            "for the original fully sequential behaviour"
+        ),
+    )
     return parser
 
 
 def main() -> int:
     args = _build_parser().parse_args()
+    if args.jobs < 1:
+        print("jobs must be >= 1")
+        return 2
     project_root = PROJECT_ROOT
 
     golden_dir_name = args.golden_technique_dir.strip() or _to_pascal_case(args.technique_key)
@@ -283,17 +299,39 @@ def main() -> int:
         )
         return 0
 
-    succeeded = 0
-    failed = 0
-    for i, (file_path, angle, idx, record_reference, out_file, cmd) in enumerate(planned, start=1):
+    def _run_one(i: int, file_path: Path, record_reference: str, out_file: Path, cmd: list[str]) -> bool:
         print(f"[{i}/{len(planned)}] running {file_path.name} -> {record_reference}")
         result = subprocess.run(cmd, cwd=project_root)
         if result.returncode == 0 and out_file.exists():
             print(f"  saved: {out_file}")
-            succeeded += 1
-        else:
-            print(f"  failed rc={result.returncode}: {record_reference}")
-            failed += 1
+            return True
+        print(f"  failed rc={result.returncode}: {record_reference}")
+        return False
+
+    succeeded = 0
+    failed = 0
+    if args.jobs <= 1:
+        # Exact original sequential path.
+        for i, (file_path, angle, idx, record_reference, out_file, cmd) in enumerate(planned, start=1):
+            if _run_one(i, file_path, record_reference, out_file, cmd):
+                succeeded += 1
+            else:
+                failed += 1
+    else:
+        # Every planned run targets a distinct out_file (idx makes each
+        # record_reference/out_file unique), so these are safe to run
+        # concurrently — same VRAM caveat as elsewhere: keep --jobs modest.
+        print(f"running up to {args.jobs} capture(s) concurrently")
+        with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+            futures = [
+                executor.submit(_run_one, i, file_path, record_reference, out_file, cmd)
+                for i, (file_path, angle, idx, record_reference, out_file, cmd) in enumerate(planned, start=1)
+            ]
+            for future in as_completed(futures):
+                if future.result():
+                    succeeded += 1
+                else:
+                    failed += 1
 
     print(
         "summary:",

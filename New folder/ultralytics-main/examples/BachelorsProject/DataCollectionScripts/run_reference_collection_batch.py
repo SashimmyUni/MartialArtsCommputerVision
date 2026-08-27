@@ -6,7 +6,9 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from ultralytics.utils.tqdm import TQDM
@@ -108,14 +110,30 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--cooldown-seconds",
         type=float,
-        default=8.0,
-        help="sleep time between capture jobs to cool CPU (default: 8.0)",
+        default=0.0,
+        help=(
+            "sleep time between capture jobs, e.g. to cool a thermally-limited CPU (default: 0.0 — "
+            "was 8.0; with --jobs running captures concurrently there is little reason to also "
+            "throttle with a fixed sleep, but pass a positive value if your machine needs it)"
+        ),
     )
     parser.add_argument(
         "--cpu-threads",
         type=int,
         default=6,
-        help="max CPU threads for child capture process (default: 6)",
+        help="max CPU threads for each child capture process's BLAS/OMP pool (default: 6)",
+    )
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=2,
+        help=(
+            "number of plan rows (technique/angle) to capture concurrently, each spawning its own "
+            "action_recognition.py subprocess with its own YOLO model on the GPU (default: 2). "
+            "Each subprocess holds its own CUDA context + model in VRAM — raise this only if you've "
+            "confirmed your GPU has headroom for it; pass --jobs 1 to fall back to the original "
+            "fully sequential behaviour"
+        ),
     )
     parser.add_argument(
         "--capture-seed-reference-dir",
@@ -265,6 +283,9 @@ def main() -> int:
     if args.cpu_threads < 1:
         print("cpu-threads must be >= 1")
         return 2
+    if args.jobs < 1:
+        print("jobs must be >= 1")
+        return 2
     if args.capture_seed_min_score < 0.0 or args.capture_seed_max_score > 100.0:
         print("capture-seed min/max scores must be in [0, 100]")
         return 2
@@ -334,23 +355,20 @@ def main() -> int:
         print("aborting batch due to preflight failures. Add more URLs or use --allow-source-reuse")
         return 2
 
-    completed = 0
-    skipped_existing = 0
-    failed = 0
-    examples_saved = 0
-    batch_progress = TQDM(total=len(ready_rows), desc="capture batch", unit="job")
-
-    for i, row in enumerate(ready_rows, start=1):
+    def _process_row(i: int, row: dict[str, str]) -> dict[str, object]:
+        """Run one plan row (technique/angle) to completion: skip/overwrite checks,
+        then one action_recognition.py subprocess per needed example (retrying
+        across that row's source URLs), fully self-contained so it's safe to run
+        concurrently with other rows — it only ever touches files named for its
+        own (technique, angle), never another row's.
+        """
         technique = (row.get("technique") or "").strip()
         angle = (row.get("angle") or "").strip()
         source_urls = _collect_source_urls(row)
         reference_key = (row.get("record_reference_key") or row.get("reference_key") or "").strip()
         if not technique or not angle or not source_urls or not reference_key:
             print(f"[{i}/{len(ready_rows)}] skip malformed row")
-            failed += 1
-            batch_progress.update(1)
-            batch_progress.set_postfix(completed=completed, skipped=skipped_existing, failed=failed)
-            continue
+            return {"outcome": "failed", "saved": 0}
 
         technique_dir = project_root / "reference_poses" / technique
         technique_dir.mkdir(parents=True, exist_ok=True)
@@ -366,10 +384,7 @@ def main() -> int:
                 f"[{i}/{len(ready_rows)}] skip existing: {technique}/{angle} "
                 f"has {len(existing_files)} example(s)"
             )
-            skipped_existing += 1
-            batch_progress.update(1)
-            batch_progress.set_postfix(completed=completed, skipped=skipped_existing, failed=failed)
-            continue
+            return {"outcome": "skip_existing", "saved": 0}
 
         needed = max(0, args.examples_per_angle - len(existing_files))
         if needed > len(source_urls) and not args.allow_source_reuse:
@@ -377,10 +392,7 @@ def main() -> int:
                 f"[{i}/{len(ready_rows)}] failed: {technique}/{angle} needs {needed} distinct source URLs, "
                 f"but only {len(source_urls)} provided"
             )
-            failed += 1
-            batch_progress.update(1)
-            batch_progress.set_postfix(completed=completed, skipped=skipped_existing, failed=failed)
-            continue
+            return {"outcome": "failed", "saved": 0}
 
         saved_for_row = 0
         row_failed = False
@@ -473,7 +485,6 @@ def main() -> int:
 
                 if result.returncode == 0 and out_file.exists():
                     saved_for_row += 1
-                    examples_saved += 1
                     example_saved = True
                     print(f"  - saved: {out_file}")
                     break
@@ -490,13 +501,41 @@ def main() -> int:
                 time.sleep(args.cooldown_seconds)
 
         if row_failed:
-            failed += 1
-        else:
-            completed += 1
-            print(f"[{i}/{len(ready_rows)}] saved {saved_for_row} new example(s) for {technique}/{angle}")
+            return {"outcome": "failed", "saved": saved_for_row}
+        print(f"[{i}/{len(ready_rows)}] saved {saved_for_row} new example(s) for {technique}/{angle}")
+        return {"outcome": "completed", "saved": saved_for_row}
 
-        batch_progress.update(1)
-        batch_progress.set_postfix(completed=completed, skipped=skipped_existing, failed=failed)
+    completed = 0
+    skipped_existing = 0
+    failed = 0
+    examples_saved = 0
+    counters_lock = threading.Lock()
+    batch_progress = TQDM(total=len(ready_rows), desc="capture batch", unit="job")
+
+    def _record_result(result: dict[str, object]) -> None:
+        nonlocal completed, skipped_existing, failed, examples_saved
+        with counters_lock:
+            outcome = result["outcome"]
+            examples_saved += int(result["saved"])
+            if outcome == "completed":
+                completed += 1
+            elif outcome == "skip_existing":
+                skipped_existing += 1
+            else:
+                failed += 1
+            batch_progress.update(1)
+            batch_progress.set_postfix(completed=completed, skipped=skipped_existing, failed=failed)
+
+    if args.jobs <= 1:
+        # Exact original sequential path — no thread pool involved.
+        for i, row in enumerate(ready_rows, start=1):
+            _record_result(_process_row(i, row))
+    else:
+        print(f"running up to {args.jobs} capture job(s) concurrently")
+        with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+            futures = [executor.submit(_process_row, i, row) for i, row in enumerate(ready_rows, start=1)]
+            for future in as_completed(futures):
+                _record_result(future.result())
 
     batch_progress.close()
 

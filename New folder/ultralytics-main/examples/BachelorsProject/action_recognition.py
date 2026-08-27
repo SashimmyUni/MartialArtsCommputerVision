@@ -50,6 +50,67 @@ def _resolve_project_path(path_value: str | None) -> Path | None:
     return p if p.is_absolute() else PROJECT_ROOT / p
 
 
+class _StageTimer:
+    """Lightweight per-stage wall-clock accumulator for perf instrumentation.
+
+    Usage: ``with stage_timer("decode"): frame = cap.read()``. Accumulates
+    total seconds and call counts per named stage in ``self.totals`` /
+    ``self.counts`` so a run can report where time actually went.
+    """
+
+    def __init__(self) -> None:
+        self.totals: dict[str, float] = defaultdict(float)
+        self.counts: dict[str, int] = defaultdict(int)
+        self._stage: str | None = None
+        self._t0: float = 0.0
+
+    def __call__(self, stage: str) -> "_StageTimer":
+        self._stage = stage
+        return self
+
+    def __enter__(self) -> "_StageTimer":
+        self._t0 = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        elapsed = time.perf_counter() - self._t0
+        stage = self._stage or "other"
+        self.totals[stage] += elapsed
+        self.counts[stage] += 1
+
+    def summary(self, total_frames: int, wall_seconds: float) -> dict[str, object]:
+        """Build a timing summary. ``wall_seconds`` should be an independently
+        measured wall-clock span for the whole loop (not just the sum of
+        instrumented stages) so fps/ms-per-frame stay accurate even where a
+        stretch of per-frame work isn't wrapped in a named stage — any such gap
+        is reported explicitly as an "unaccounted" stage rather than silently
+        making the total look faster than it really was.
+        """
+        named_total = sum(self.totals.values())
+        unaccounted = max(0.0, wall_seconds - named_total)
+        stages = dict(self.totals)
+        if unaccounted > 1e-6:
+            stages["unaccounted"] = unaccounted
+        by_stage = {
+            stage: {
+                "seconds": round(seconds, 4),
+                "pct": round(100.0 * seconds / wall_seconds, 2) if wall_seconds > 0 else 0.0,
+                "calls": self.counts.get(stage, 0),
+                "ms_per_call": (
+                    round(1000.0 * seconds / self.counts[stage], 4) if self.counts.get(stage) else None
+                ),
+            }
+            for stage, seconds in sorted(stages.items(), key=lambda kv: kv[1], reverse=True)
+        }
+        return {
+            "total_frames": total_frames,
+            "total_seconds": round(wall_seconds, 4),
+            "fps": round(total_frames / wall_seconds, 3) if wall_seconds > 0 else 0.0,
+            "ms_per_frame": round(1000.0 * wall_seconds / total_frames, 4) if total_frames else 0.0,
+            "by_stage": by_stage,
+        }
+
+
 class TorchVisionVideoClassifier:
     """Video classifier using pretrained TorchVision models for action recognition.
 
@@ -649,24 +710,189 @@ def save_reference_pose(
     return out_path
 
 
+_REF_PREP_CACHE: dict[tuple[int, float], tuple[np.ndarray, dict]] = {}
+
+
+def _prepare_reference_sequence(reference_sequence: np.ndarray, conf_thresh: float = 0.2) -> dict:
+    """Precompute and cache the per-reference quantities ``compare_pose_sequence``
+    needs, keyed by ``(id(reference_sequence), conf_thresh)`` with an identity
+    check on lookup so a reused ``id()`` can never return stale data.
+
+    Reference sequences are loaded once at startup and held for the whole run
+    by ``references``/``capture_seed_references``, so normalizing/resampling
+    them here once — instead of on every scored frame, for every frame of
+    every reference in the bank — is the single largest scoring speedup:
+    references are immutable for the run.
+    """
+    key = (id(reference_sequence), conf_thresh)
+    cached = _REF_PREP_CACHE.get(key)
+    if cached is not None and cached[0] is reference_sequence:
+        return cached[1]
+
+    ref_norm = normalize_pose_sequence(reference_sequence, conf_thresh=conf_thresh)
+    target_len = max(4, ref_norm.shape[0])
+    ref_res = resample_pose_sequence(ref_norm, target_len)
+    ref_flat = ref_res.reshape(-1).astype(np.float32)
+    ref_flat_norm = float(np.linalg.norm(ref_flat))
+    ref_mean_angles = {
+        category: _sequence_mean_angles(ref_res, angle_defs) for category, angle_defs in _ANGLE_DEF_CATEGORIES.items()
+    }
+    prepared = {
+        "target_len": target_len,
+        "ref_res": ref_res,
+        "ref_flat": ref_flat,
+        "ref_flat_norm": ref_flat_norm,
+        "ref_mean_angles": ref_mean_angles,
+    }
+    _REF_PREP_CACHE[key] = (reference_sequence, prepared)
+    return prepared
+
+
+def _compare_resampled(
+    usr_res: np.ndarray,
+    usr_mirror_res: np.ndarray,
+    prepared: dict,
+    technique: str,
+) -> dict[str, float | bool]:
+    """Core metric bundle for one (already-resampled user window, prepared
+    reference) pair. Shared by ``compare_pose_sequence`` and the batched
+    ``_best_reference_match`` so both compute the exact same math.
+    """
+    ref_res = prepared["ref_res"]
+    ref_flat = prepared["ref_flat"]
+    ref_flat_norm = prepared["ref_flat_norm"]
+
+    usr_flat = usr_res.reshape(-1)
+    usr_mirror_flat = usr_mirror_res.reshape(-1)
+    usr_norm = float(np.linalg.norm(usr_flat))
+    usr_mirror_norm = float(np.linalg.norm(usr_mirror_flat))
+
+    cos_plain = 0.0
+    if usr_norm >= 1e-6 and ref_flat_norm >= 1e-6:
+        cos_plain = float(np.dot(usr_flat, ref_flat) / (usr_norm * ref_flat_norm))
+    cos_mirror = 0.0
+    if usr_mirror_norm >= 1e-6 and ref_flat_norm >= 1e-6:
+        cos_mirror = float(np.dot(usr_mirror_flat, ref_flat) / (usr_mirror_norm * ref_flat_norm))
+
+    use_mirror = cos_mirror > cos_plain
+    usr_best = usr_mirror_res if use_mirror else usr_res
+    cos_sim = max(cos_plain, cos_mirror)
+
+    cost = _pairwise_frame_cost_matrix(usr_best, ref_res)
+    dtw_dist = float(_dtw_min_plus(cost) / max(cost.shape[0], cost.shape[1]))
+    mean_dist = float(np.diagonal(cost).mean())
+
+    category = _technique_angle_category(technique)
+    angle_defs = _ANGLE_DEF_CATEGORIES[category]
+    u_angles = _sequence_mean_angles(usr_best, angle_defs)
+    r_angles = prepared["ref_mean_angles"][category]
+    errs = [abs(u - r) for u, r in zip(u_angles, r_angles) if np.isfinite(u) and np.isfinite(r)]
+    angle_err = float(np.mean(errs)) if errs else 90.0
+
+    cosine_score = (cos_sim + 1.0) * 50.0
+    dtw_score = max(0.0, 100.0 * (1.0 - (dtw_dist / 0.8)))
+    angle_score = max(0.0, 100.0 * (1.0 - (angle_err / 90.0)))
+    pose_dist_score = max(0.0, 100.0 * (1.0 - (mean_dist / 0.8)))
+    final_score = 0.35 * cosine_score + 0.25 * dtw_score + 0.25 * angle_score + 0.15 * pose_dist_score
+
+    return {
+        "use_mirror": use_mirror,
+        "cosine_similarity": float(cos_sim),
+        "dtw_distance": float(dtw_dist),
+        "angle_error": float(angle_err),
+        "mean_pose_distance": float(mean_dist),
+        "score": float(np.clip(final_score, 0.0, 100.0)),
+    }
+
+
+def _cosine_prescreen(user_norm: np.ndarray, prepared_by_angle: dict[str, dict], topk: int) -> list[str]:
+    """Rank references by cheap flattened cosine similarity (both mirror
+    orientations), grouped by resample target length to avoid redundant
+    resampling. Returns the top-``topk`` angle keys by that similarity, used
+    by ``--score-topk`` to skip full DTW scoring on the rest of the bank.
+    """
+    groups: dict[int, list[str]] = defaultdict(list)
+    for angle, prepared in prepared_by_angle.items():
+        groups[prepared["target_len"]].append(angle)
+
+    scored: list[tuple[float, str]] = []
+    for target_len, angles in groups.items():
+        usr_res = resample_pose_sequence(user_norm, target_len)
+        usr_mirror_res = _mirror_sequence(usr_res)
+        usr_flat = usr_res.reshape(-1)
+        usr_mirror_flat = usr_mirror_res.reshape(-1)
+        usr_norm_val = float(np.linalg.norm(usr_flat))
+        usr_mirror_norm_val = float(np.linalg.norm(usr_mirror_flat))
+        for angle in angles:
+            prepared = prepared_by_angle[angle]
+            ref_flat = prepared["ref_flat"]
+            ref_flat_norm = prepared["ref_flat_norm"]
+            cos_plain = 0.0
+            if usr_norm_val >= 1e-6 and ref_flat_norm >= 1e-6:
+                cos_plain = float(np.dot(usr_flat, ref_flat) / (usr_norm_val * ref_flat_norm))
+            cos_mirror = 0.0
+            if usr_mirror_norm_val >= 1e-6 and ref_flat_norm >= 1e-6:
+                cos_mirror = float(np.dot(usr_mirror_flat, ref_flat) / (usr_mirror_norm_val * ref_flat_norm))
+            scored.append((max(cos_plain, cos_mirror), angle))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [angle for _, angle in scored[:topk]]
+
+
 def _best_reference_match(
     user_sequence: np.ndarray,
     reference_bank: dict[str, np.ndarray],
     technique: str,
     conf_thresh: float = 0.2,
+    user_norm: np.ndarray | None = None,
+    topk: int = 0,
 ) -> tuple[str, dict[str, float | bool]] | None:
-    """Return the best-matching angle and metrics from a technique's reference bank."""
+    """Return the best-matching angle and metrics from a technique's reference bank.
+
+    Args:
+        user_norm: Optional precomputed ``normalize_pose_sequence(user_sequence,
+            conf_thresh=conf_thresh)``. When provided, skips renormalizing —
+            callers that already normalized the same window for another
+            purpose this frame can reuse it here.
+        topk: When > 0, prescreen the bank with a cheap cosine similarity
+            (see ``_cosine_prescreen``) and only run full DTW/angle scoring on
+            the top ``topk`` candidates. ``0`` (default) scores every
+            reference and matches prior behaviour exactly.
+    """
+    if not reference_bank:
+        return None
+
+    if user_norm is None:
+        user_norm = normalize_pose_sequence(user_sequence, conf_thresh=conf_thresh)
+
+    prepared_by_angle: dict[str, dict] = {}
+    groups: dict[int, list[str]] = defaultdict(list)
+    for angle, ref_seq in reference_bank.items():
+        prepared = _prepare_reference_sequence(ref_seq, conf_thresh=conf_thresh)
+        prepared_by_angle[angle] = prepared
+        groups[prepared["target_len"]].append(angle)
+
+    candidate_set = set(reference_bank.keys())
+    if topk > 0 and len(candidate_set) > topk:
+        candidate_set = set(_cosine_prescreen(user_norm, prepared_by_angle, topk))
+
+    metrics_by_angle: dict[str, dict[str, float | bool]] = {}
+    for target_len, angles in groups.items():
+        angles_in_group = [a for a in angles if a in candidate_set]
+        if not angles_in_group:
+            continue
+        usr_res = resample_pose_sequence(user_norm, target_len)
+        usr_mirror_res = _mirror_sequence(usr_res)
+        for angle in angles_in_group:
+            metrics_by_angle[angle] = _compare_resampled(usr_res, usr_mirror_res, prepared_by_angle[angle], technique)
+
     best_angle = ""
     best_metrics: dict[str, float | bool] | None = None
     best_score = -1.0
-
-    for angle, ref_seq in reference_bank.items():
-        metrics = compare_pose_sequence(
-            user_sequence=user_sequence,
-            reference_sequence=ref_seq,
-            technique=technique,
-            conf_thresh=conf_thresh,
-        )
+    for angle in reference_bank:  # preserve original bank order for tie-breaking
+        metrics = metrics_by_angle.get(angle)
+        if metrics is None:
+            continue
         score = float(metrics["score"])
         if score > best_score:
             best_score = score
@@ -722,6 +948,43 @@ def _append_metric_row(metrics_path: Path, row: dict) -> None:
         if write_header:
             writer.writeheader()
         writer.writerow(row)
+
+
+class _MetricsWriter:
+    """Persistent ``metrics.csv`` writer.
+
+    Opens the file once and keeps the handle for the whole run instead of the
+    open/mkdir/exists/close cycle ``_append_metric_row`` runs on every single
+    scored frame. Periodically flushes so a crash or Ctrl+C still leaves a
+    readable file on disk.
+    """
+
+    def __init__(self, metrics_path: Path, flush_every: int = 20) -> None:
+        self.metrics_path = metrics_path
+        self.flush_every = max(1, flush_every)
+        self._rows_since_flush = 0
+        self._writer: csv.DictWriter | None = None
+        self.metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        self._write_header_pending = not self.metrics_path.exists()
+        self._file = self.metrics_path.open("a", newline="", encoding="utf-8")
+
+    def write_row(self, row: dict) -> None:
+        if self._writer is None:
+            self._writer = csv.DictWriter(self._file, fieldnames=list(row.keys()))
+            if self._write_header_pending:
+                self._writer.writeheader()
+                self._write_header_pending = False
+        self._writer.writerow(row)
+        self._rows_since_flush += 1
+        if self._rows_since_flush >= self.flush_every:
+            self._file.flush()
+            self._rows_since_flush = 0
+
+    def close(self) -> None:
+        try:
+            self._file.flush()
+        finally:
+            self._file.close()
 
 
 def _write_reference_meta(reference_path: Path, technique: str, source: str, num_frames: int) -> None:
@@ -912,50 +1175,128 @@ def _frame_pose_distance(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.mean(np.linalg.norm(a[valid] - b[valid], axis=1)))
 
 
-def dtw_pose_distance(seq_a: np.ndarray, seq_b: np.ndarray) -> float:
-    """DTW distance between two normalized pose sequences ``(T,K,2)``."""
-    na, nb = seq_a.shape[0], seq_b.shape[0]
+def _pairwise_frame_cost_matrix(seq_a: np.ndarray, seq_b: np.ndarray) -> np.ndarray:
+    """Vectorized equivalent of calling ``_frame_pose_distance`` for every
+    ``(frame_a, frame_b)`` pair between two ``(T,K,2)`` sequences.
+
+    Returns an ``(len(seq_a), len(seq_b))`` float32 matrix. Each cell is the
+    mean keypoint distance over keypoints valid in *both* frames, or ``1.0``
+    if no keypoint is valid in both — matching ``_frame_pose_distance``
+    exactly, just computed for the whole grid in one broadcast instead of a
+    Python-level double loop with one function call per cell.
+    """
+    valid_a = np.isfinite(seq_a).all(axis=2)  # (na, K)
+    valid_b = np.isfinite(seq_b).all(axis=2)  # (nb, K)
+    both_valid = valid_a[:, None, :] & valid_b[None, :, :]  # (na, nb, K)
+    any_valid = both_valid.any(axis=2)  # (na, nb)
+
+    a_safe = np.nan_to_num(seq_a, nan=0.0)
+    b_safe = np.nan_to_num(seq_b, nan=0.0)
+    diff = a_safe[:, None, :, :] - b_safe[None, :, :, :]  # (na, nb, K, 2)
+    dist = np.sqrt((diff**2).sum(axis=3))  # (na, nb, K)
+    dist = np.where(both_valid, dist, 0.0)
+    valid_counts = both_valid.sum(axis=2).astype(np.float32)
+    cost = np.where(any_valid, dist.sum(axis=2) / np.maximum(valid_counts, 1.0), 1.0)
+    return cost.astype(np.float32)
+
+
+def _dtw_min_plus(cost: np.ndarray) -> float:
+    """Vectorized min-plus DTW recurrence over a precomputed ``(na, nb)`` cost
+    matrix.
+
+    Mathematically identical to ``dp[i,j] = cost[i-1,j-1] + min(dp[i-1,j],
+    dp[i,j-1], dp[i-1,j-1])`` with ``dp[0,0] = 0`` and all other border cells
+    at infinity — evaluated along cost-matrix anti-diagonals so every
+    diagonal is one vectorized numpy op instead of ``na*nb`` Python-level
+    iterations.
+    """
+    na, nb = cost.shape
     dp = np.full((na + 1, nb + 1), np.inf, dtype=np.float32)
     dp[0, 0] = 0.0
-    for i in range(1, na + 1):
-        for j in range(1, nb + 1):
-            cost = _frame_pose_distance(seq_a[i - 1], seq_b[j - 1])
-            dp[i, j] = cost + min(dp[i - 1, j], dp[i, j - 1], dp[i - 1, j - 1])
-    return float(dp[na, nb] / max(na, nb))
+    for d in range(2, na + nb + 1):
+        i_lo = max(1, d - nb)
+        i_hi = min(na, d - 1)
+        if i_lo > i_hi:
+            continue
+        i_idx = np.arange(i_lo, i_hi + 1)
+        j_idx = d - i_idx
+        best_prev = np.minimum(np.minimum(dp[i_idx - 1, j_idx], dp[i_idx, j_idx - 1]), dp[i_idx - 1, j_idx - 1])
+        dp[i_idx, j_idx] = cost[i_idx - 1, j_idx - 1] + best_prev
+    return float(dp[na, nb])
+
+
+def dtw_pose_distance(seq_a: np.ndarray, seq_b: np.ndarray) -> float:
+    """DTW distance between two normalized pose sequences ``(T,K,2)``.
+
+    Vectorized reimplementation of the original nested-loop DTW: same
+    recurrence, same float32 accumulation, results match to float rounding.
+    """
+    na, nb = seq_a.shape[0], seq_b.shape[0]
+    if na == 0 or nb == 0:
+        return float("inf")
+    cost = _pairwise_frame_cost_matrix(seq_a, seq_b)
+    return float(_dtw_min_plus(cost) / max(na, nb))
 
 
 def _mean_angle_sequence(seq: np.ndarray, a: int, b: int, c: int) -> float:
-    vals = []
-    for frame in seq:
-        pa = _safe_joint(frame, a)
-        pb = _safe_joint(frame, b)
-        pc = _safe_joint(frame, c)
-        if pa is None or pb is None or pc is None:
-            continue
-        ang = _joint_angle_deg(pa, pb, pc)
-        if np.isfinite(ang):
-            vals.append(ang)
-    if not vals:
+    """Mean joint angle ABC (degrees) across a sequence's frames.
+
+    Vectorized equivalent of calling ``_joint_angle_deg``/``_safe_joint`` once
+    per frame: frames where any of the three joints is invalid or the two
+    limb vectors are nearly coincident (< 1e-6) are excluded from the mean,
+    matching the original per-frame skip/NaN-filter behaviour exactly.
+    """
+    k = seq.shape[1] if seq.ndim == 3 else 0
+    if seq.shape[0] == 0 or k <= max(a, b, c):
         return float("nan")
-    return float(np.mean(vals))
+
+    pa = seq[:, a, :2]
+    pb = seq[:, b, :2]
+    pc = seq[:, c, :2]
+    valid_pts = np.isfinite(pa).all(axis=1) & np.isfinite(pb).all(axis=1) & np.isfinite(pc).all(axis=1)
+
+    ba = pa - pb
+    bc = pc - pb
+    nba = np.linalg.norm(ba, axis=1)
+    nbc = np.linalg.norm(bc, axis=1)
+    valid = valid_pts & (nba >= 1e-6) & (nbc >= 1e-6)
+    if not valid.any():
+        return float("nan")
+
+    denom = np.where(valid, nba * nbc, 1.0)
+    cosang = np.clip((ba * bc).sum(axis=1) / denom, -1.0, 1.0)
+    angles = np.degrees(np.arccos(cosang))
+    return float(angles[valid].mean())
+
+
+_ANGLE_DEF_CATEGORIES: dict[str, list[tuple[int, int, int]]] = {
+    "punch": [(5, 7, 9), (6, 8, 10), (7, 5, 11), (8, 6, 12)],
+    "kick": [(11, 13, 15), (12, 14, 16), (5, 11, 13), (6, 12, 14)],
+    "other": [(5, 7, 9), (6, 8, 10), (11, 13, 15), (12, 14, 16)],
+}
+
+
+def _technique_angle_category(technique: str) -> str:
+    """Return which of ``_ANGLE_DEF_CATEGORIES`` applies to a technique name."""
+    t = technique.lower().replace("-", " ").strip()
+    if "jab" in t or "cross" in t or "hook" in t:
+        return "punch"
+    if "kick" in t:
+        return "kick"
+    return "other"
+
+
+def _sequence_mean_angles(seq: np.ndarray, angle_defs: list[tuple[int, int, int]]) -> list[float]:
+    """Mean joint angle (degrees) per angle definition, in order."""
+    return [_mean_angle_sequence(seq, a, b, c) for a, b, c in angle_defs]
 
 
 def technique_angle_error(user_seq: np.ndarray, ref_seq: np.ndarray, technique: str) -> float:
     """Mean absolute angle error for technique-relevant joints."""
-    t = technique.lower().replace("-", " ").strip()
-    if "jab" in t or "cross" in t or "hook" in t:
-        angle_defs = [(5, 7, 9), (6, 8, 10), (7, 5, 11), (8, 6, 12)]
-    elif "kick" in t:
-        angle_defs = [(11, 13, 15), (12, 14, 16), (5, 11, 13), (6, 12, 14)]
-    else:
-        angle_defs = [(5, 7, 9), (6, 8, 10), (11, 13, 15), (12, 14, 16)]
-
-    errs = []
-    for a, b, c in angle_defs:
-        u = _mean_angle_sequence(user_seq, a, b, c)
-        r = _mean_angle_sequence(ref_seq, a, b, c)
-        if np.isfinite(u) and np.isfinite(r):
-            errs.append(abs(u - r))
+    angle_defs = _ANGLE_DEF_CATEGORIES[_technique_angle_category(technique)]
+    u_angles = _sequence_mean_angles(user_seq, angle_defs)
+    r_angles = _sequence_mean_angles(ref_seq, angle_defs)
+    errs = [abs(u - r) for u, r in zip(u_angles, r_angles) if np.isfinite(u) and np.isfinite(r)]
     if not errs:
         return 90.0
     return float(np.mean(errs))
@@ -1292,48 +1633,34 @@ def compare_pose_sequence(
     reference_sequence: np.ndarray,
     technique: str,
     conf_thresh: float = 0.2,
+    user_norm: np.ndarray | None = None,
 ) -> dict[str, float | bool]:
-    """Compare user sequence against reference and return metric bundle."""
-    ref_norm = normalize_pose_sequence(reference_sequence, conf_thresh=conf_thresh)
-    user_norm = normalize_pose_sequence(user_sequence, conf_thresh=conf_thresh)
+    """Compare user sequence against reference and return metric bundle.
 
-    target_len = max(4, ref_norm.shape[0])
-    ref_res = resample_pose_sequence(ref_norm, target_len)
-    usr_res = resample_pose_sequence(user_norm, target_len)
+    Args:
+        user_norm: Optional precomputed ``normalize_pose_sequence(user_sequence,
+            conf_thresh=conf_thresh)`` to skip renormalizing when the caller
+            already has it for this frame.
+    """
+    prepared = _prepare_reference_sequence(reference_sequence, conf_thresh=conf_thresh)
+    if user_norm is None:
+        user_norm = normalize_pose_sequence(user_sequence, conf_thresh=conf_thresh)
+    usr_res = resample_pose_sequence(user_norm, prepared["target_len"])
     usr_mirror_res = _mirror_sequence(usr_res)
-
-    # Choose orientation that best matches reference.
-    cos_plain = cosine_pose_similarity(usr_res, ref_res)
-    cos_mirror = cosine_pose_similarity(usr_mirror_res, ref_res)
-    use_mirror = cos_mirror > cos_plain
-    usr_best = usr_mirror_res if use_mirror else usr_res
-    cos_sim = max(cos_plain, cos_mirror)
-
-    dtw_dist = dtw_pose_distance(usr_best, ref_res)
-    angle_err = technique_angle_error(usr_best, ref_res, technique)
-    mean_dist = float(np.mean([_frame_pose_distance(a, b) for a, b in zip(usr_best, ref_res)]))
-
-    # Convert metrics to [0,100] then combine.
-    cosine_score = (cos_sim + 1.0) * 50.0
-    dtw_score = max(0.0, 100.0 * (1.0 - (dtw_dist / 0.8)))
-    angle_score = max(0.0, 100.0 * (1.0 - (angle_err / 90.0)))
-    pose_dist_score = max(0.0, 100.0 * (1.0 - (mean_dist / 0.8)))
-    final_score = 0.35 * cosine_score + 0.25 * dtw_score + 0.25 * angle_score + 0.15 * pose_dist_score
-
-    return {
-        "use_mirror": use_mirror,
-        "cosine_similarity": float(cos_sim),
-        "dtw_distance": float(dtw_dist),
-        "angle_error": float(angle_err),
-        "mean_pose_distance": float(mean_dist),
-        "score": float(np.clip(final_score, 0.0, 100.0)),
-    }
+    return _compare_resampled(usr_res, usr_mirror_res, prepared, technique)
 
 
-def generate_feedback(technique: str, user_sequence: np.ndarray, score: float) -> list[str]:
-    """Generate concise feedback strings from normalized user sequence."""
+def generate_feedback(
+    technique: str, user_sequence: np.ndarray, score: float, user_norm: np.ndarray | None = None
+) -> list[str]:
+    """Generate concise feedback strings from normalized user sequence.
+
+    Args:
+        user_norm: Optional precomputed ``normalize_pose_sequence(user_sequence)``
+            to skip renormalizing when the caller already has it this frame.
+    """
     t = technique.lower().replace("-", " ").strip()
-    seq = normalize_pose_sequence(user_sequence)
+    seq = user_norm if user_norm is not None else normalize_pose_sequence(user_sequence)
     if len(seq) == 0:
         return ["No pose detected"]
 
@@ -1454,16 +1781,24 @@ def _build_reference_overlay(
     technique: str,
     use_mirror: bool,
     conf_thresh: float = 0.2,
+    user_norm: np.ndarray | None = None,
 ) -> tuple[np.ndarray | None, list[tuple[tuple[int, int], tuple[int, int]]]]:
-    """Build a projected ghost pose and top correction arrows for the current frame."""
-    ref_norm = normalize_pose_sequence(reference_sequence, conf_thresh=conf_thresh)
-    user_norm = normalize_pose_sequence(user_sequence, conf_thresh=conf_thresh)
+    """Build a projected ghost pose and top correction arrows for the current frame.
+
+    Args:
+        user_norm: Optional precomputed ``normalize_pose_sequence(user_sequence,
+            conf_thresh=conf_thresh)`` to skip renormalizing when the caller
+            already has it this frame.
+    """
+    prepared = _prepare_reference_sequence(reference_sequence, conf_thresh=conf_thresh)
+    ref_res = prepared["ref_res"]
+    if user_norm is None:
+        user_norm = normalize_pose_sequence(user_sequence, conf_thresh=conf_thresh)
     current_norm = normalize_pose_frame(current_frame_kpts, conf_thresh=conf_thresh)
-    if ref_norm.size == 0 or user_norm.size == 0 or current_norm.size == 0:
+    if ref_res.size == 0 or user_norm.size == 0 or current_norm.size == 0:
         return None, []
 
-    target_len = max(4, ref_norm.shape[0])
-    ref_res = resample_pose_sequence(ref_norm, target_len)
+    target_len = prepared["target_len"]
     user_res = resample_pose_sequence(user_norm, target_len)
     ref_best = _mirror_sequence(ref_res) if use_mirror else ref_res
     user_last = current_norm
@@ -1513,19 +1848,48 @@ def _draw_reference_ghost(
     frame: np.ndarray,
     ghost_pose: np.ndarray | None,
 ) -> None:
-    """Render the projected target pose onto the frame."""
-    if ghost_pose is not None:
-        overlay = frame.copy()
-        draw_pose_cv2(
-            overlay,
-            ghost_pose,
-            conf_thres=0.01,
-            joint_color=(90, 255, 90),
-            edge_color=(40, 220, 40),
-            joint_radius=3,
-            edge_thickness=2,
-        )
-        cv2.addWeighted(overlay, 0.42, frame, 0.58, 0, frame)
+    """Render the projected target pose onto the frame.
+
+    Blends only the region bounding the drawn skeleton rather than a full
+    ``frame.copy()`` + full-frame ``addWeighted`` — everywhere outside that
+    region is untouched by the draw, so the blended result there is
+    mathematically identical to leaving it alone; this just avoids doing that
+    no-op blend over the whole frame.
+    """
+    if ghost_pose is None or ghost_pose.ndim != 2 or ghost_pose.shape[1] < 2:
+        return
+
+    valid = np.isfinite(ghost_pose[:, :2]).all(axis=1)
+    if ghost_pose.shape[1] >= 3:
+        valid &= np.isfinite(ghost_pose[:, 2]) & (ghost_pose[:, 2] >= 0.01)
+    if not valid.any():
+        return
+
+    h, w = frame.shape[:2]
+    pts = ghost_pose[valid, :2]
+    margin = 12  # covers joint_radius/edge_thickness draw overshoot below
+    x1 = max(0, int(np.floor(pts[:, 0].min())) - margin)
+    y1 = max(0, int(np.floor(pts[:, 1].min())) - margin)
+    x2 = min(w, int(np.ceil(pts[:, 0].max())) + margin)
+    y2 = min(h, int(np.ceil(pts[:, 1].max())) + margin)
+    if x2 <= x1 or y2 <= y1:
+        return
+
+    roi = frame[y1:y2, x1:x2]
+    overlay = roi.copy()
+    shifted_pose = ghost_pose.copy()
+    shifted_pose[:, 0] -= x1
+    shifted_pose[:, 1] -= y1
+    draw_pose_cv2(
+        overlay,
+        shifted_pose,
+        conf_thres=0.01,
+        joint_color=(90, 255, 90),
+        edge_color=(40, 220, 40),
+        joint_radius=3,
+        edge_thickness=2,
+    )
+    cv2.addWeighted(overlay, 0.42, roi, 0.58, 0, roi)
 
 
 def _draw_info_panel(
@@ -1558,9 +1922,14 @@ def _draw_info_panel(
     y2 = y1 + panel_h
 
     base_color = (36, 140, 36) if ok_state else (24, 24, 156)
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (x1, y1), (x2, y2), base_color, -1)
-    cv2.addWeighted(overlay, 0.36, frame, 0.64, 0, frame)
+    # Blend only the panel's own region instead of a full frame.copy() +
+    # full-frame addWeighted — everywhere outside the panel is untouched by
+    # the fill, so restricting the blend to just that rect gives the same
+    # result for a fraction of the pixels.
+    roi = frame[y1:y2, x1:x2]
+    overlay = roi.copy()
+    cv2.rectangle(overlay, (0, 0), (x2 - x1, y2 - y1), base_color, -1)
+    cv2.addWeighted(overlay, 0.36, roi, 0.64, 0, roi)
     cv2.rectangle(frame, (x1, y1), (x2, y2), (220, 220, 220), 1)
 
     for i, line in enumerate(lines):
@@ -1685,13 +2054,16 @@ def _track_activity_score(
     current_box: np.ndarray,
     frame_width: int,
     frame_height: int,
-) -> float:
-    """Heuristic score for choosing the primary fighter.
+) -> tuple[float, np.ndarray | None]:
+    """Heuristic score for choosing the primary fighter, plus the stacked keypoint
+    history used to compute it (so callers can reuse the stack instead of
+    re-running ``_safe_stack_kpt_sequence`` over the same history again later).
 
     Strongly favors recent wrist motion, with smaller contributions from track motion
     and subject size to break ties when multiple people are visible.
     """
     wrist_energy = 0.0
+    stacked = None
     if len(kpt_history) >= 2:
         stacked = _safe_stack_kpt_sequence(kpt_history)
         if stacked is not None and len(stacked) >= 2:
@@ -1702,7 +2074,8 @@ def _track_activity_score(
     area = max((x2 - x1) * (y2 - y1), 0.0)
     frame_area = max(float(frame_width * frame_height), 1.0)
     area_ratio = float(area / frame_area)
-    return 2.5 * wrist_energy + 0.75 * box_energy + 0.15 * math.sqrt(area_ratio)
+    score = 2.5 * wrist_energy + 0.75 * box_energy + 0.15 * math.sqrt(area_ratio)
+    return score, stacked
 
 
 def _select_primary_track(
@@ -1717,23 +2090,30 @@ def _select_primary_track(
     hold_until_frame: int,
     primary_track_switch_margin: float,
     person_selection_mode: str,
-) -> tuple[int | None, int, dict[int, float]]:
-    """Return the active track id, hold-until frame, and per-track scores."""
+) -> tuple[int | None, int, dict[int, float], dict[int, np.ndarray]]:
+    """Return the active track id, hold-until frame, per-track scores, and the
+    stacked keypoint history computed for each track along the way (so ``run()``
+    can reuse the primary track's stack instead of re-stacking it).
+    """
     if not track_ids:
-        return None, hold_until_frame, {}
+        return None, hold_until_frame, {}, {}
 
     if person_selection_mode == "all":
-        return None, hold_until_frame, {}
+        return None, hold_until_frame, {}, {}
 
     scores: dict[int, float] = {}
+    stacked_by_track: dict[int, np.ndarray] = {}
     for track_id in track_ids:
-        scores[track_id] = _track_activity_score(
+        score, stacked = _track_activity_score(
             kpt_history=track_kpts_history.get(track_id, []),
             box_history=track_box_history.get(track_id, []),
             current_box=track_boxes[track_id],
             frame_width=frame_width,
             frame_height=frame_height,
         )
+        scores[track_id] = score
+        if stacked is not None:
+            stacked_by_track[track_id] = stacked
 
     best_track_id = max(scores, key=scores.get)
     best_score = scores[best_track_id]
@@ -1741,9 +2121,9 @@ def _select_primary_track(
     if current_primary_track_id in scores:
         current_score = scores[current_primary_track_id]
         if current_frame <= hold_until_frame or current_score * primary_track_switch_margin >= best_score:
-            return current_primary_track_id, hold_until_frame, scores
+            return current_primary_track_id, hold_until_frame, scores, stacked_by_track
 
-    return best_track_id, current_frame, scores
+    return best_track_id, current_frame, scores, stacked_by_track
 
 
 def run(
@@ -1798,6 +2178,12 @@ def run(
     debug: bool = False,
     display: bool = True,
     fast_mode: bool = False,
+    profile: bool = False,
+    imgsz: int = 640,
+    detect_stride: int = 1,
+    score_every: int = 1,
+    score_topk: int = 0,
+    ref_canonical_len: int = 0,
 ) -> None:
     """Run action recognition on a video source using YOLO for object detection (or pose
     estimation) and a video classifier.
@@ -1872,6 +2258,24 @@ def run(
         enable_structured_storage (bool): If True, persist run config, metrics and
             track summaries under ``storage_root``.
         fast_mode (bool): Apply speed-optimized defaults for non-visual runs.
+        profile (bool): If True, write a cProfile ``.prof`` file for this run under
+            the structured storage run directory, and always write a
+            ``timing.json`` stage-timing breakdown regardless of this flag.
+        imgsz (int): Inference image size passed to the YOLO pose model.
+        detect_stride (int): Run YOLO tracking every N frames; reuse the previous
+            frame's detections/pose for the frames in between. 1 = detect every
+            frame (default, matches prior behaviour).
+        score_every (int): Run trainer scoring every N scored ticks (on top of
+            ``skip_frame``). 1 = score every eligible tick (default, matches
+            prior behaviour).
+        score_topk (int): If > 0, prescreen the reference bank with a cheap cosine
+            similarity and run full DTW scoring only on the top-K candidates
+            instead of the whole bank. 0 disables the prescreen (default, matches
+            prior behaviour exactly).
+        ref_canonical_len (int): If > 0, resample every loaded reference sequence
+            to this fixed length once at load time, shrinking the O(T^2) DTW cost
+            per reference. 0 disables this and keeps each reference's native
+            length (default, matches prior behaviour exactly).
     """
 
     if skip_frame <= 0:
@@ -1894,14 +2298,29 @@ def run(
         raise ValueError("--ref-stance-min-frames must be >= 2")
     if ref_stance_hold_frames < 1:
         raise ValueError("--ref-stance-hold-frames must be >= 1")
+    if imgsz <= 0:
+        raise ValueError("--imgsz must be >= 1")
+    if detect_stride <= 0:
+        raise ValueError("--detect-stride must be >= 1")
+    if score_every <= 0:
+        raise ValueError("--score-every must be >= 1")
+    if score_topk < 0:
+        raise ValueError("--score-topk must be >= 0")
+    if ref_canonical_len < 0:
+        raise ValueError("--ref-canonical-len must be >= 0")
 
     if fast_mode:
         # Preset tuned for throughput: disable expensive visualization/classifier paths.
+        # Matches the --fast-mode help text ("no display, no overlay/boxes, no video
+        # classifier, and higher frame skip"). Does not touch trainer scoring, so
+        # scores/metrics.csv are unaffected — only drawing/encoding work is skipped.
         display = False
-        visualize_pose = True  # Keep pose visualization for debugging/tracing even in fast mode.
-        draw_boxes = True  # Box drawing is relatively cheap and helps with debugging.
-        overlay_pose = True
+        visualize_pose = False
+        draw_boxes = False
+        overlay_pose = False
         enable_video_classifier = False
+        if skip_frame == 1:
+            skip_frame = 2
         # Reference capture currently flows through trainer logic, so only disable
         # trainer when not capturing a reference.
         if not record_reference:
@@ -1984,18 +2403,30 @@ def run(
         "debug": debug,
         "display": display,
         "fast_mode": fast_mode,
+        "profile": profile,
+        "imgsz": imgsz,
+        "detect_stride": detect_stride,
+        "score_every": score_every,
+        "score_topk": score_topk,
+        "ref_canonical_len": ref_canonical_len,
     }
 
     storage_ctx = None
+    metrics_writer: _MetricsWriter | None = None
     if enable_structured_storage:
         storage_ctx = _init_structured_run_storage(storage_root=storage_root, run_name=run_name, run_config=run_config)
         print(f"structured storage run_id: {storage_ctx['run_id']}")
         print(f"structured storage dir: {storage_ctx['run_dir']}")
+        metrics_writer = _MetricsWriter(storage_ctx["metrics_path"])
     # Initialize models and device
     device = select_device(device)
     yolo_model = YOLO(weights).to(device)
     # detect pose capability from resolved model task (more robust than filename checks)
     is_pose_model = getattr(yolo_model, "task", "") == "pose"
+    # --fp16 previously only reached the (optional) video classifier; route it to the
+    # pose model too, but only on CUDA — half precision on CPU is unsupported/slower,
+    # and this GPU tier (no tensor cores) still benefits from the reduced memory traffic.
+    pose_half = bool(fp16) and torch.device(device).type == "cuda"
 
     # By default, save pose keypoints under this script's project root.
     if is_pose_model and save_kpts_dir is None:
@@ -2011,6 +2442,16 @@ def run(
         if capture_seed_reference_dir
         else {}
     )
+    if ref_canonical_len > 0:
+        # Shrink every loaded reference to a fixed frame count once, up front, so the
+        # O(T^2) DTW cost per reference during scoring uses this length instead of each
+        # reference's (often much longer) native length. References captured live during
+        # this same run via --record-reference are not affected (added at native length).
+        for bank in (references, capture_seed_references):
+            for technique_bank in bank.values():
+                for angle_key, ref_seq in technique_bank.items():
+                    technique_bank[angle_key] = resample_pose_sequence(ref_seq, ref_canonical_len)
+        print(f"reference sequences resampled to canonical length: {ref_canonical_len} frames")
     if label_thresholds_path is None:
         auto_threshold_path = Path(reference_dir) / "label_thresholds.json"
         if auto_threshold_path.exists():
@@ -2148,12 +2589,28 @@ def run(
     track_box_history: dict[int, list[np.ndarray]] = defaultdict(list)
     primary_track_id: int | None = None
     primary_track_hold_until_frame = 0
+    score_tick_counter = 0
     frame_progress = TQDM(total=total_frames, desc="processing frames", unit="frame")
     _exit_after_save = False
 
+    stage_timer = _StageTimer()
+    profiler = None
+    if profile:
+        import cProfile
+
+        profiler = cProfile.Profile()
+        profiler.enable()
+
+    # --detect-stride > 1 reuses the previous frame's YOLO tracking result instead of
+    # calling yolo_model.track() every frame. Default 1 preserves prior behaviour exactly.
+    cached_results = None
+    pose_canvas = np.zeros((frame_height, frame_width, 3), dtype=np.uint8) if visualize_pose else None
+
+    loop_start = time.perf_counter()
     try:
         while cap.isOpened():
-            success, frame = cap.read()
+            with stage_timer("decode"):
+                success, frame = cap.read()
             if not success:
                 break
 
@@ -2171,9 +2628,19 @@ def run(
                 )
                 break
 
-            # Run YOLO tracking (works for pose models too)
-
-            results = yolo_model.track(frame, persist=True, classes=[0])  # Track only person class
+            # Run YOLO tracking (works for pose models too). verbose=False drops the
+            # per-frame stdout log line Ultralytics otherwise prints on every call.
+            with stage_timer("yolo"):
+                if detect_stride <= 1 or cached_results is None or (frame_counter - 1) % detect_stride == 0:
+                    results = yolo_model.track(
+                        frame, persist=True, classes=[0], verbose=False, imgsz=imgsz, half=pose_half
+                    )
+                    cached_results = results
+                else:
+                    # Reuse the last detection/tracking result instead of re-running YOLO.
+                    # Track state (e.g. Kalman filters) does not advance on these frames —
+                    # an accepted trade-off of opt-in --detect-stride, off (1) by default.
+                    results = cached_results
             annotator = Annotator(frame, line_width=3, font_size=10, pil=False)
             pose_instances: list[np.ndarray] = []
             selected_pose_instances: list[np.ndarray] = []
@@ -2205,8 +2672,12 @@ def run(
                         track_to_pose[track_id] = pose_instances[i]
 
                     if frame_counter % skip_frame == 0:
-                        crop = crop_and_pad(frame, box, crop_margin_percentage)
-                        track_history[track_id].append(crop)
+                        # crop_and_pad (cv2.resize to 224x224) is only ever consumed by the
+                        # video classifier below; skip it entirely when that's disabled
+                        # (e.g. --disable-video-classifier / --fast-mode).
+                        if video_classifier is not None:
+                            crop = crop_and_pad(frame, box, crop_margin_percentage)
+                            track_history[track_id].append(crop)
                         track_box_history[track_id].append(np.asarray(box, dtype=np.float32))
                         if pose_instances and i < len(pose_instances):
                             history = track_kpts_history.setdefault(track_id, [])
@@ -2214,14 +2685,14 @@ def run(
                             if sanitized is not None:
                                 history.append(sanitized)
 
-                    if len(track_history[track_id]) > num_video_sequence_samples:
+                    if video_classifier is not None and len(track_history[track_id]) > num_video_sequence_samples:
                         track_history[track_id].pop(0)
                     if len(track_box_history.get(track_id, [])) > num_video_sequence_samples:
                         track_box_history[track_id].pop(0)
                     if is_pose_model and len(track_kpts_history.get(track_id, [])) > capture_kpts_history_len:
                         track_kpts_history[track_id].pop(0)
 
-                primary_track_id, selected_at_frame, track_scores = _select_primary_track(
+                primary_track_id, selected_at_frame, track_scores, stacked_kpts_by_track = _select_primary_track(
                     track_ids=current_track_ids,
                     track_boxes=current_track_boxes,
                     track_kpts_history=track_kpts_history,
@@ -2267,7 +2738,14 @@ def run(
                         else num_video_sequence_samples
                     )
                     if trainer_enabled and is_pose_model and len(track_kpts_history.get(primary_track_id, [])) >= required_capture_frames:
-                        stacked_seq = _safe_stack_kpt_sequence(track_kpts_history[primary_track_id])
+                        # Reuse the stack _select_primary_track already computed for this
+                        # track's activity score above instead of re-stacking the same
+                        # history a second time; only falls back to a fresh stack for the
+                        # (rare) case that computation skipped (e.g. history was too short
+                        # at that point, or --person-selection-mode all never populates it).
+                        stacked_seq = stacked_kpts_by_track.get(primary_track_id)
+                        if stacked_seq is None:
+                            stacked_seq = _safe_stack_kpt_sequence(track_kpts_history[primary_track_id])
                         if stacked_seq is not None and len(stacked_seq) >= required_capture_frames:
                             pose_seq = stacked_seq[-num_video_sequence_samples:]
                             capture_seq = pose_seq
@@ -2365,61 +2843,85 @@ def run(
 
                             technique = _normalize_key(target_technique)
                             if technique in references:
-                                best = _best_reference_match(
-                                    user_sequence=pose_seq,
-                                    reference_bank=references[technique],
-                                    technique=technique,
-                                )
-                                if best is not None:
-                                    best_angle, metrics = best
-                                    score = float(metrics["score"])
-                                    score_threshold = float(label_thresholds.get(technique, trainer_score_threshold))
-                                    is_correct = score >= score_threshold
-                                    feedback = generate_feedback(technique, pose_seq, score)
-                                    ghost_pose = None
-                                    matched_ref = references.get(technique, {}).get(best_angle)
-                                    current_pose_abs = track_to_pose.get(primary_track_id)
-                                    if not is_correct and matched_ref is not None and current_pose_abs is not None:
-                                        ghost_pose, _ = _build_reference_overlay(
+                                # --score-every > 1 decouples scoring cadence from --skip-frame:
+                                # trainer_state simply keeps its last value on skipped ticks, so
+                                # the overlay/panel keeps showing the most recent score. Default
+                                # 1 scores every eligible tick, matching prior behaviour exactly.
+                                score_tick_counter += 1
+                                if score_tick_counter % score_every == 0:
+                                    with stage_timer("scoring"):
+                                        # Normalize the scoring window once and reuse it across
+                                        # every reference in the bank plus feedback/overlay
+                                        # generation below, instead of each of those
+                                        # renormalizing it independently.
+                                        pose_seq_norm = normalize_pose_sequence(pose_seq, conf_thresh=0.2)
+                                        best = _best_reference_match(
                                             user_sequence=pose_seq,
-                                            reference_sequence=matched_ref,
-                                            current_frame_kpts=current_pose_abs,
+                                            reference_bank=references[technique],
                                             technique=technique,
-                                            use_mirror=bool(metrics.get("use_mirror", False)),
+                                            user_norm=pose_seq_norm,
+                                            topk=score_topk,
                                         )
-                                    trainer_state[primary_track_id] = {
-                                        "technique": technique,
-                                        "reference_angle": best_angle,
-                                        "score": score,
-                                        "score_threshold": score_threshold,
-                                        "is_correct": is_correct,
-                                        "feedback": feedback,
-                                        "ghost_pose": ghost_pose,
-                                    }
-
-                                    if enable_structured_storage and storage_ctx is not None:
-                                        _append_metric_row(
-                                            metrics_path=storage_ctx["metrics_path"],
-                                            row={
-                                                "run_id": storage_ctx["run_id"],
-                                                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                                                "frame": frame_counter,
-                                                "track_id": float(primary_track_id),
+                                        if best is not None:
+                                            best_angle, metrics = best
+                                            score = float(metrics["score"])
+                                            score_threshold = float(
+                                                label_thresholds.get(technique, trainer_score_threshold)
+                                            )
+                                            is_correct = score >= score_threshold
+                                            feedback = generate_feedback(
+                                                technique, pose_seq, score, user_norm=pose_seq_norm
+                                            )
+                                            ghost_pose = None
+                                            matched_ref = references.get(technique, {}).get(best_angle)
+                                            current_pose_abs = track_to_pose.get(primary_track_id)
+                                            if (
+                                                not is_correct
+                                                and matched_ref is not None
+                                                and current_pose_abs is not None
+                                            ):
+                                                ghost_pose, _ = _build_reference_overlay(
+                                                    user_sequence=pose_seq,
+                                                    reference_sequence=matched_ref,
+                                                    current_frame_kpts=current_pose_abs,
+                                                    technique=technique,
+                                                    use_mirror=bool(metrics.get("use_mirror", False)),
+                                                    user_norm=pose_seq_norm,
+                                                )
+                                            trainer_state[primary_track_id] = {
                                                 "technique": technique,
                                                 "reference_angle": best_angle,
-                                                "score": f"{score:.4f}",
-                                                "score_threshold": f"{score_threshold:.4f}",
-                                                "is_correct": bool(is_correct),
-                                                "cosine_similarity": f"{float(metrics['cosine_similarity']):.6f}",
-                                                "dtw_distance": f"{float(metrics['dtw_distance']):.6f}",
-                                                "angle_error": f"{float(metrics['angle_error']):.6f}",
-                                                "mean_pose_distance": f"{float(metrics['mean_pose_distance']):.6f}",
-                                                "use_mirror": bool(metrics["use_mirror"]),
-                                                "feedback_1": feedback[0] if len(feedback) > 0 else "",
-                                                "feedback_2": feedback[1] if len(feedback) > 1 else "",
-                                                "source": str(source),
-                                            },
-                                        )
+                                                "score": score,
+                                                "score_threshold": score_threshold,
+                                                "is_correct": is_correct,
+                                                "feedback": feedback,
+                                                "ghost_pose": ghost_pose,
+                                            }
+
+                                            if enable_structured_storage and metrics_writer is not None:
+                                                metrics_writer.write_row(
+                                                    row={
+                                                        "run_id": storage_ctx["run_id"],
+                                                        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                                                        "frame": frame_counter,
+                                                        "track_id": float(primary_track_id),
+                                                        "technique": technique,
+                                                        "reference_angle": best_angle,
+                                                        "score": f"{score:.4f}",
+                                                        "score_threshold": f"{score_threshold:.4f}",
+                                                        "is_correct": bool(is_correct),
+                                                        "cosine_similarity": f"{float(metrics['cosine_similarity']):.6f}",
+                                                        "dtw_distance": f"{float(metrics['dtw_distance']):.6f}",
+                                                        "angle_error": f"{float(metrics['angle_error']):.6f}",
+                                                        "mean_pose_distance": (
+                                                            f"{float(metrics['mean_pose_distance']):.6f}"
+                                                        ),
+                                                        "use_mirror": bool(metrics["use_mirror"]),
+                                                        "feedback_1": feedback[0] if len(feedback) > 0 else "",
+                                                        "feedback_2": feedback[1] if len(feedback) > 1 else "",
+                                                        "source": str(source),
+                                                    },
+                                                )
 
                 if video_classifier is not None and crops_to_infer and (
                     not pred_labels
@@ -2498,49 +3000,56 @@ def run(
                                 font_scale=0.5,
                             )
 
-            # Show the image that Annotator actually draws on.
-            display_frame = annotator.im
+            with stage_timer("drawing"):
+                # Show the image that Annotator actually draws on.
+                display_frame = annotator.im
 
-            # Overlay pose directly on the displayed frame.
-            if overlay_pose and selected_pose_instances:
-                for kp in selected_pose_instances:
-                    draw_pose_cv2(display_frame, kp, conf_thres=0.01)
-
-            if trainer_enabled and overlay_pose and is_pose_model:
-                for track_id in active_track_ids:
-                    state = trainer_state.get(int(track_id))
-                    if not state or bool(state.get("is_correct", False)):
-                        continue
-                    ghost_pose = state.get("ghost_pose")
-                    if ghost_pose is None:
-                        continue
-                    _draw_reference_ghost(display_frame, ghost_pose)
-
-            if display:
-                cv2.imshow("Video", display_frame)
-            if output_path is not None:
-                out.write(display_frame)
-
-            if visualize_pose:
-                pose_img = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
-                if selected_pose_instances:
+                # Overlay pose directly on the displayed frame.
+                if overlay_pose and selected_pose_instances:
                     for kp in selected_pose_instances:
-                        draw_pose_cv2(pose_img, kp, conf_thres=0.01)
-                else:
-                    cv2.putText(
-                        pose_img,
-                        "No pose detected",
-                        (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8,
-                        (0, 0, 255),
-                        2,
-                        cv2.LINE_AA,
-                    )
+                        draw_pose_cv2(display_frame, kp, conf_thres=0.01)
+
+                if trainer_enabled and overlay_pose and is_pose_model:
+                    for track_id in active_track_ids:
+                        state = trainer_state.get(int(track_id))
+                        if not state or bool(state.get("is_correct", False)):
+                            continue
+                        ghost_pose = state.get("ghost_pose")
+                        if ghost_pose is None:
+                            continue
+                        _draw_reference_ghost(display_frame, ghost_pose)
+
+                if visualize_pose:
+                    # Reuse one scratch canvas instead of allocating a fresh
+                    # (H,W,3) array every frame.
+                    pose_canvas[:] = 0
+                    pose_img = pose_canvas
+                    if selected_pose_instances:
+                        for kp in selected_pose_instances:
+                            draw_pose_cv2(pose_img, kp, conf_thres=0.01)
+                    else:
+                        cv2.putText(
+                            pose_img,
+                            "No pose detected",
+                            (20, 40),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.8,
+                            (0, 0, 255),
+                            2,
+                            cv2.LINE_AA,
+                        )
+
+            with stage_timer("encode"):
                 if display:
-                    cv2.imshow("Pose", pose_img)
-                if pose_writer is not None:
-                    pose_writer.write(pose_img)
+                    cv2.imshow("Video", display_frame)
+                if output_path is not None:
+                    out.write(display_frame)
+
+                if visualize_pose:
+                    if display:
+                        cv2.imshow("Pose", pose_img)
+                    if pose_writer is not None:
+                        pose_writer.write(pose_img)
 
             frame_progress.update(1)
 
@@ -2606,6 +3115,31 @@ def run(
             save_keypoint_sequences(track_kpts_history, str(tracks_dir))
             _write_track_summary(track_kpts_history, Path(storage_ctx["run_dir"]) / "tracks_summary.json")
             print(f"structured tracks saved to: {tracks_dir}")
+
+        loop_elapsed = time.perf_counter() - loop_start
+        timing_summary = stage_timer.summary(total_frames=frame_counter, wall_seconds=loop_elapsed)
+        print(
+            f"timing: {timing_summary['fps']} fps, {timing_summary['ms_per_frame']} ms/frame "
+            f"over {timing_summary['total_frames']} frames ({timing_summary['total_seconds']}s)"
+        )
+        for stage, stats in timing_summary["by_stage"].items():
+            call_info = f", {stats['ms_per_call']} ms/call" if stats["ms_per_call"] is not None else ""
+            print(f"  {stage}: {stats['seconds']}s ({stats['pct']}%){call_info}")
+        if enable_structured_storage and storage_ctx is not None:
+            timing_path = Path(storage_ctx["run_dir"]) / "timing.json"
+            _write_json(timing_path, timing_summary)
+            print(f"timing summary saved to: {timing_path}")
+
+        if profiler is not None:
+            profiler.disable()
+            prof_dir = Path(storage_ctx["run_dir"]) if (enable_structured_storage and storage_ctx is not None) else Path(storage_root)
+            prof_dir.mkdir(parents=True, exist_ok=True)
+            prof_path = prof_dir / "profile.prof"
+            profiler.dump_stats(str(prof_path))
+            print(f"cProfile stats saved to: {prof_path} (open with snakeviz or pstats.Stats)")
+
+        if metrics_writer is not None:
+            metrics_writer.close()
 
         # always release resources
         cap.release()
@@ -2957,6 +3491,58 @@ def parse_opt() -> argparse.Namespace:
         help=(
             "apply speed-optimized preset: no display, no overlay/boxes, no video classifier, "
             "and higher frame skip"
+        ),
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help=(
+            "write a per-stage timing.json breakdown (decode/yolo/scoring/drawing/encode) and a "
+            "cProfile .prof file for this run"
+        ),
+    )
+    parser.add_argument(
+        "--imgsz",
+        type=_positive_int,
+        default=640,
+        help="YOLO inference image size (default: 640)",
+    )
+    parser.add_argument(
+        "--detect-stride",
+        type=_positive_int,
+        default=1,
+        help=(
+            "run YOLO tracking every N frames and reuse the previous detection/pose in between "
+            "(1 = every frame, default, matches prior behaviour exactly)"
+        ),
+    )
+    parser.add_argument(
+        "--score-every",
+        type=_positive_int,
+        default=1,
+        help=(
+            "run trainer scoring every N eligible ticks, on top of --skip-frame; the overlay "
+            "keeps showing the last computed score on skipped ticks (1 = every tick, default)"
+        ),
+    )
+    parser.add_argument(
+        "--score-topk",
+        type=int,
+        default=0,
+        help=(
+            "prescreen the reference bank with a cheap cosine similarity and only run full "
+            "DTW/angle scoring on the top-K candidates (0 = score the whole bank, default, "
+            "matches prior behaviour exactly)"
+        ),
+    )
+    parser.add_argument(
+        "--ref-canonical-len",
+        type=int,
+        default=0,
+        help=(
+            "resample every loaded reference sequence to this fixed frame length once at load "
+            "time, shrinking the O(T^2) DTW cost per reference (0 = keep each reference's "
+            "native length, default, matches prior behaviour exactly)"
         ),
     )
     return parser.parse_args()

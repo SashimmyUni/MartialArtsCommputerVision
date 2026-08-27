@@ -1,0 +1,13 @@
+# Python virtual environment (created at repo root per README.md)
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Batch/run artifacts produced by action_recognition.py and the batch scripts
+New folder/ultralytics-main/examples/BachelorsProject/data/
+New folder/ultralytics-main/examples/BachelorsProject/output_input_batch/
+New folder/ultralytics-main/examples/BachelorsProject/Output/
+New folder/ultralytics-main/examples/BachelorsProject/datasets/
+*.prof
