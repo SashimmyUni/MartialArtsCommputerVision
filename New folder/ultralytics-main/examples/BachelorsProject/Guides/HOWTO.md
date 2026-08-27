@@ -343,6 +343,41 @@ Supervisor support requested:
 
 - Access to a GPU workstation/server for batch capture and evaluation.
 
+Update: the trainer scoring core (`_best_reference_match` /
+`compare_pose_sequence` in `action_recognition.py`) was rewritten to cache
+normalized/resampled references at load time and to vectorize DTW/angle-error
+scoring — previously the dominant per-frame cost (a Python-level nested loop
+re-normalizing every reference and computing DTW cell-by-cell, on every scored
+frame). Correctness is verified by `test_scoring_equivalence.py`, which checks
+the optimized scoring against a pinned copy of the original implementation and
+asserts identical results within float tolerance; run it after touching
+anything under the scoring core. Throughput can be measured directly with
+`benchmark_scoring.py` (no video needed — uses the committed
+`keypoints/track_*.npy` files) and, for a full run, with the new `--profile`
+flag (writes `timing.json` with a decode/yolo/scoring/drawing/encode
+breakdown, plus an optional cProfile `.prof`).
+
+New opt-in speed flags on `action_recognition.py` (all default to prior
+behaviour — pass none of these and nothing changes):
+
+- `--imgsz N` — YOLO inference size (default 640).
+- `--detect-stride N` — run YOLO every N frames, reuse the last detection in between.
+- `--score-every N` — run trainer scoring every N eligible ticks; the overlay keeps the last score in between.
+- `--score-topk K` — cosine-prescreen the reference bank and only DTW-score the top K candidates (0 = score the whole bank).
+- `--ref-canonical-len L` — resample every loaded reference to a fixed frame count at load time, shrinking the O(T²) DTW cost per reference (0 = keep native length).
+- `--fast-mode` now actually matches its own help text (previously it left
+  `visualize_pose`/`draw_boxes`/`overlay_pose` on and never touched
+  `skip_frame`, contrary to what it claimed).
+
+`run_reference_collection_batch.py` and `run_inputvideo_batch.ps1` gained a
+`--jobs`/`-Jobs` flag to capture multiple rows/videos concurrently instead of
+one `action_recognition.py` subprocess at a time (each holds its own YOLO
+model + CUDA context, so keep this modest relative to available VRAM).
+`run_inputvideo_batch.ps1` also had a path bug fixed: it was `Set-Location`-ing
+into `DataCollectionScripts/` and then invoking `action_recognition.py` with a
+path relative to that directory, where the script doesn't live — the batch
+never actually ran the trainer.
+
 ---
 
 ## 10. Practical Commands

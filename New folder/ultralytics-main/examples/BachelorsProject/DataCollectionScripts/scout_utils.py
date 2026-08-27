@@ -222,30 +222,48 @@ def frame_pose_distance(frame_a: np.ndarray, frame_b: np.ndarray) -> float:
 
 def dtw_pose_distance(seq_a: np.ndarray, seq_b: np.ndarray, max_dist: float = 500.0) -> float:
     """Dynamic Time Warping distance between pose sequences (T,K,2).
-    
+
     Returns normalized distance (0-1 roughly, can be >1 for very different poses).
     Capped at max_dist to avoid computing full matrix for very dissimilar sequences.
+
+    The per-frame cost matrix (equivalent to calling ``frame_pose_distance`` for
+    every (frame_a, frame_b) pair) is computed in one vectorized broadcast
+    instead of once per DP cell; the min-plus recurrence and its early-abandon
+    return (as soon as any accumulated distance exceeds ``max_dist``) are
+    unchanged.
     """
     if seq_a.ndim != 3 or seq_b.ndim != 3:
         return float("inf")
-    
+
     na = seq_a.shape[0]
     nb = seq_b.shape[0]
     if na == 0 or nb == 0:
         return float("inf")
-    
+
+    valid_a = np.isfinite(seq_a).all(axis=2)  # (na, K)
+    valid_b = np.isfinite(seq_b).all(axis=2)  # (nb, K)
+    both_valid = valid_a[:, None, :] & valid_b[None, :, :]  # (na, nb, K)
+    any_valid = both_valid.any(axis=2)  # (na, nb)
+    a_safe = np.nan_to_num(seq_a, nan=0.0)
+    b_safe = np.nan_to_num(seq_b, nan=0.0)
+    diff = a_safe[:, None, :, :] - b_safe[None, :, :, :]  # (na, nb, K, 2)
+    dist = np.where(both_valid, np.sqrt((diff**2).sum(axis=3)), 0.0)
+    valid_counts = both_valid.sum(axis=2).astype(np.float32)
+    # Matches frame_pose_distance's float("inf") fallback when no keypoint is
+    # valid in both frames.
+    cost_matrix = np.where(any_valid, dist.sum(axis=2) / np.maximum(valid_counts, 1.0), np.inf).astype(np.float32)
+
     dp = np.full((na + 1, nb + 1), np.inf, dtype=np.float32)
     dp[0, 0] = 0.0
-    
+
     for i in range(1, na + 1):
         for j in range(1, nb + 1):
-            cost = frame_pose_distance(seq_a[i - 1], seq_b[j - 1])
-            dp[i, j] = cost + min(dp[i - 1, j], dp[i, j - 1], dp[i - 1, j - 1])
-            
+            dp[i, j] = cost_matrix[i - 1, j - 1] + min(dp[i - 1, j], dp[i, j - 1], dp[i - 1, j - 1])
+
             # Early termination if accumulated distance exceeds threshold
             if dp[i, j] > max_dist:
                 return float("inf")
-    
+
     normalized = float(dp[na, nb] / max(na, nb))
     return normalized
 
