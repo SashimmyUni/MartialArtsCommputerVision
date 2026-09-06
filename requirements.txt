@@ -1,0 +1,26 @@
+# Core runtime dependencies for the reference-based martial arts trainer.
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# NOTE: torch/torchvision are intentionally unpinned here because the correct
+# wheel depends on your CUDA version. For the GTX 1660 / CUDA 13 setup this repo
+# was developed on, install them first from the PyTorch index, then run the
+# command above:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+# Avoid torch 2.4.0 on Windows (known CPU errors, see ultralytics#15049).
+
+ultralytics==8.4.21
+opencv-python>=4.6.0
+numpy>=1.23.0
+torch>=1.8.0,!=2.4.0
+torchvision>=0.9.0
+
+# Optional: only needed for the X-CLIP / VideoMAE action-label classifier.
+# The trainer runs fine without it via --disable-video-classifier.
+# transformers>=4.30.0
+
+# Optional: only needed for plot_score_distributions_grouped.py.
+# matplotlib>=3.5.0
+# pandas>=1.5.0
+# seaborn>=0.12.0
