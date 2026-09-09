@@ -158,15 +158,21 @@ def extraction_signature(
     classes: tuple[int, ...] | list[int],
     tracker: str,
     ultralytics_version: str,
-    max_frames: int,
-    detect_stride: int = 1,
+    device_kind: str,
 ) -> str:
     """Hash of everything that changes the detections stored in a track cache.
 
     Selection-only parameters are deliberately absent — see the module
     docstring. ``ultralytics_version`` is included because tracker behaviour is
-    version-sensitive, and the caller passes it in so this module stays
-    importable without ultralytics installed.
+    version-sensitive, and ``device_kind`` because CUDA and CPU float paths do
+    not produce identical keypoints; both are passed in so this module stays
+    importable without ultralytics or torch installed.
+
+    How many frames were extracted is deliberately *not* part of the key.
+    Folding it in would give the same video a different entry for every search
+    horizon, fragmenting the cache exactly where it is meant to pay off. The
+    count is recorded in the sidecar instead and compared by
+    ``cache_covers_frames`` at lookup time.
     """
     payload = {
         "weights": weights_fingerprint(weights),
@@ -176,8 +182,7 @@ def extraction_signature(
         "classes": sorted(int(c) for c in classes),
         "tracker": str(tracker),
         "ultralytics": str(ultralytics_version),
-        "max_frames": int(max_frames),
-        "detect_stride": int(detect_stride),
+        "device_kind": str(device_kind),
     }
     return _short_hash(json.dumps(payload, sort_keys=True), 16)
 
@@ -204,6 +209,7 @@ def write_track_cache(
     signature: str,
     *,
     frame_idx: np.ndarray,
+    det_order: np.ndarray,
     track_id: np.ndarray,
     box: np.ndarray,
     kpts: np.ndarray,
@@ -221,6 +227,7 @@ def write_track_cache(
     np.savez_compressed(
         out_path,
         frame_idx=np.asarray(frame_idx, dtype=np.int32),
+        det_order=np.asarray(det_order, dtype=np.int16),
         track_id=np.asarray(track_id, dtype=np.int32),
         box=np.asarray(box, dtype=np.float32),
         kpts=np.asarray(kpts, dtype=np.float32),
@@ -246,20 +253,28 @@ class TrackCache:
     def __init__(
         self,
         frame_idx: np.ndarray,
+        det_order: np.ndarray,
         track_id: np.ndarray,
         box: np.ndarray,
         kpts: np.ndarray,
         meta: dict[str, Any],
     ) -> None:
         self.frame_idx = np.asarray(frame_idx, dtype=np.int32)
+        self.det_order = np.asarray(det_order, dtype=np.int16)
         self.track_id = np.asarray(track_id, dtype=np.int32)
         self.box = np.asarray(box, dtype=np.float32)
         self.kpts = np.asarray(kpts, dtype=np.float32)
         self.meta = dict(meta)
 
-        order = np.argsort(self.frame_idx, kind="stable")
+        # Sort by (frame, detection order). Detection order is the model's own
+        # output order and is load-bearing: run() pairs keypoints to boxes
+        # positionally, and _select_primary_track breaks score ties with max(),
+        # which returns the first key at the maximum. Reordering rows would
+        # reassign keypoints to the wrong person and flip tie-breaks.
+        order = np.lexsort((self.det_order, self.frame_idx))
         if not np.array_equal(order, np.arange(self.frame_idx.size)):
             self.frame_idx = self.frame_idx[order]
+            self.det_order = self.det_order[order]
             self.track_id = self.track_id[order]
             self.box = self.box[order]
             self.kpts = self.kpts[order]
@@ -308,6 +323,7 @@ def read_track_cache(video_id: str, signature: str) -> TrackCache | None:
     try:
         with np.load(npz_path) as data:
             frame_idx = data["frame_idx"]
+            det_order = data["det_order"]
             track_id = data["track_id"]
             box = data["box"]
             kpts = data["kpts"]
@@ -315,4 +331,194 @@ def read_track_cache(video_id: str, signature: str) -> TrackCache | None:
     except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
         print(f"warning: ignoring unreadable track cache {npz_path.name}: {exc}")
         return None
-    return TrackCache(frame_idx, track_id, box, kpts, meta)
+    return TrackCache(frame_idx, det_order, track_id, box, kpts, meta)
+
+
+def cache_covers_frames(cache: "TrackCache", needed_frames: int) -> bool:
+    """Is a cached extraction usable for a run that wants ``needed_frames``?
+
+    ``needed_frames`` of 0 means "the whole video". A cache that stopped early
+    because it hit its own frame budget covers a smaller request (the replay
+    just stops sooner) but not a larger one. A cache that ran to end-of-file
+    covers any request, because there was nothing more to extract.
+    """
+    if bool(cache.meta.get("reached_eof", False)):
+        return True
+    extracted = int(cache.meta.get("frames_read", 0))
+    if needed_frames <= 0:
+        return False
+    return extracted >= int(needed_frames)
+
+
+# ---------------------------------------------------------------------------
+# Video cache
+# ---------------------------------------------------------------------------
+
+def _run_yt_dlp(url: str, out_template: str, fmt: str, extra_args: list[str] | None = None) -> tuple[bool, str]:
+    import subprocess
+
+    cmd = [
+        "yt-dlp",
+        "--no-playlist",
+        "--no-progress",
+        "--quiet",
+        "--no-warnings",
+        "-f",
+        fmt,
+        "--merge-output-format",
+        "mp4",
+        "-o",
+        out_template,
+        url,
+    ]
+    if extra_args:
+        cmd.extend(extra_args)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    except FileNotFoundError:
+        return False, "yt-dlp is not installed (pip install yt-dlp)"
+    except subprocess.TimeoutExpired:
+        return False, "yt-dlp timed out after 1800s"
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip().splitlines()
+        return False, detail[-1] if detail else f"yt-dlp exited {result.returncode}"
+    return True, ""
+
+
+DEFAULT_FORMAT = "bestvideo[height<=1080][ext=mp4]+bestaudio/best[height<=1080]/best"
+
+
+def ensure_local_video(
+    source: str,
+    *,
+    fmt: str = DEFAULT_FORMAT,
+    force: bool = False,
+    quiet: bool = False,
+) -> Path | None:
+    """Return a local file for ``source``, downloading it once if necessary.
+
+    Local paths are returned as-is. URLs are fetched into ``cache/videos/``
+    under their stable ``video_id``, so the 60 plan URLs that appear in more
+    than one row are downloaded once rather than re-streamed per use.
+
+    Returns None when the source cannot be made local (no yt-dlp, download
+    failure). Callers are expected to fall back to streaming rather than fail:
+    a missing cache should slow the pipeline down, not break it.
+    """
+    text = str(source).strip()
+    if not is_url(text):
+        path = Path(text)
+        return path if path.exists() else None
+
+    video_id = video_id_for_source(text)
+    if not force:
+        cached = find_cached_video(video_id)
+        if cached is not None:
+            return cached
+
+    VIDEO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # Download to a temp stem and rename on success, so an interrupted fetch
+    # never leaves a truncated file that later runs would treat as a cache hit.
+    tmp_template = str(VIDEO_CACHE_DIR / f".{video_id}.partial.%(ext)s")
+    for stale in VIDEO_CACHE_DIR.glob(f".{video_id}.partial.*"):
+        stale.unlink(missing_ok=True)
+
+    ok, error = _run_yt_dlp(text, tmp_template, fmt)
+    if not ok:
+        if not quiet:
+            print(f"  download failed for {text}: {error}")
+        for stale in VIDEO_CACHE_DIR.glob(f".{video_id}.partial.*"):
+            stale.unlink(missing_ok=True)
+        return None
+
+    produced = sorted(VIDEO_CACHE_DIR.glob(f".{video_id}.partial.*"))
+    if not produced:
+        if not quiet:
+            print(f"  download produced no file for {text}")
+        return None
+
+    downloaded = produced[0]
+    final_path = VIDEO_CACHE_DIR / f"{video_id}{downloaded.suffix}"
+    downloaded.replace(final_path)
+    for stale in produced[1:]:
+        stale.unlink(missing_ok=True)
+
+    (VIDEO_CACHE_DIR / f"{video_id}.json").write_text(
+        json.dumps(
+            {
+                "video_id": video_id,
+                "source_url": text,
+                "format_selector": fmt,
+                "file": final_path.name,
+                "size_bytes": final_path.stat().st_size,
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return final_path
+
+
+# ---------------------------------------------------------------------------
+# Plan CSV source columns
+# ---------------------------------------------------------------------------
+
+def parse_source_urls(raw_source: str) -> list[str]:
+    """Split one CSV cell into candidate URLs, order-preserving and deduped.
+
+    Supported separators: newline, comma, semicolon, pipe.
+    """
+    if not raw_source:
+        return []
+    parts = [p.strip() for p in re.split(r"[\n,;|]+", raw_source) if p.strip()]
+    seen: set[str] = set()
+    unique: list[str] = []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            unique.append(p)
+    return unique
+
+
+def collect_source_urls(row: dict[str, str]) -> list[str]:
+    """Distinct source URLs for one plan row, in column order.
+
+    Reads ``source_url_1``..``source_url_4`` plus the legacy single
+    ``source_url`` column.
+    """
+    urls: list[str] = []
+    for i in range(1, 5):
+        cell = (row.get(f"source_url_{i}") or "").strip()
+        if cell:
+            urls.extend(parse_source_urls(cell))
+    legacy = (row.get("source_url") or "").strip()
+    if legacy:
+        urls.extend(parse_source_urls(legacy))
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            unique.append(u)
+    return unique
+
+
+def plan_rows(plan_path: Path, ready_only: bool = True) -> list[dict[str, str]]:
+    """Read a capture plan CSV, optionally keeping only ``command_ready=yes`` rows.
+
+    Each returned row carries ``_csv_line`` for error messages that point at the
+    spreadsheet the user actually edits.
+    """
+    import csv
+
+    rows: list[dict[str, str]] = []
+    with plan_path.open(encoding="utf-8-sig") as handle:
+        for csv_line, row in enumerate(csv.DictReader(handle), start=2):  # header is line 1
+            if ready_only and (row.get("command_ready", "").strip().lower() != "yes"):
+                continue
+            row_with_meta = dict(row)
+            row_with_meta["_csv_line"] = str(csv_line)
+            rows.append(row_with_meta)
+    return rows

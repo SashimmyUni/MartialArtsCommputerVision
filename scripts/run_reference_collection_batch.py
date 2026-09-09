@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import re
 import subprocess
 import sys
 import threading
@@ -13,9 +12,11 @@ from pathlib import Path
 
 from ultralytics.utils.tqdm import TQDM
 
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+import reference_cache as rc  # noqa: E402  (needs SCRIPT_DIR on sys.path)
 
 
 def _resolve_project_path(path_value: str) -> Path:
@@ -162,6 +163,21 @@ def parse_args() -> argparse.Namespace:
         help="allow reusing source URLs when fewer distinct URLs are available than needed examples",
     )
     parser.add_argument(
+        "--no-video-cache",
+        dest="video_cache",
+        action="store_false",
+        help=(
+            "stream sources straight from YouTube instead of downloading them once into "
+            "cache/videos/ first. Streaming is what made long batches fragile (a dropped "
+            "connection kills the run) and re-fetched videos shared across plan rows"
+        ),
+    )
+    parser.add_argument(
+        "--prefetch-only",
+        action="store_true",
+        help="download every source the plan names into cache/videos/, then exit without capturing",
+    )
+    parser.add_argument(
         "--fp16",
         action="store_true",
         help=(
@@ -186,45 +202,9 @@ def _existing_angle_examples(technique_dir: Path, angle: str) -> list[Path]:
     files.extend(sorted(technique_dir.glob(f"{angle}_*.npy")))
     return files
 
-def _parse_source_urls(raw_source: str) -> list[str]:
-    """Parse one or more candidate source URLs from CSV field.
-
-    Supports separators: newline, comma, semicolon, and pipe.
-    """
-    if not raw_source:
-        return []
-    parts = [p.strip() for p in re.split(r"[\n,;|]+", raw_source) if p.strip()]
-    # preserve order while de-duplicating
-    seen: set[str] = set()
-    unique: list[str] = []
-    for p in parts:
-        if p not in seen:
-            seen.add(p)
-            unique.append(p)
-    return unique
-
-
-def _collect_source_urls(row: dict[str, str]) -> list[str]:
-    """Collect distinct source URLs from explicit source_url_1..source_url_4 columns and legacy source_url."""
-    urls: list[str] = []
-
-    for i in range(1, 5):
-        cell = (row.get(f"source_url_{i}") or "").strip()
-        if cell:
-            urls.extend(_parse_source_urls(cell))
-
-    # Backward compatibility with legacy single-column source_url and delimiter-packed values.
-    legacy = (row.get("source_url") or "").strip()
-    if legacy:
-        urls.extend(_parse_source_urls(legacy))
-
-    seen: set[str] = set()
-    unique: list[str] = []
-    for u in urls:
-        if u not in seen:
-            seen.add(u)
-            unique.append(u)
-    return unique
+# URL parsing lives in reference_cache so prefetch_sources.py and the extraction
+# stage read the plan the same way this does; a second copy would drift.
+_collect_source_urls = rc.collect_source_urls
 
 
 def _preflight_distinct_sources(ready_rows: list[dict[str, str]], required_count: int) -> list[dict[str, str | int]]:
@@ -279,6 +259,40 @@ def _capture_profile_for_technique(technique: str, args: argparse.Namespace) -> 
         profile["capture_seed_max_score"] = float(args.capture_seed_max_score)
 
     return profile
+
+
+def _prefetch_plan_sources(ready_rows: list[dict[str, str]]) -> int:
+    """Download every distinct source the ready rows name, then stop.
+
+    Separated from capture so the slow, failure-prone part of a batch can be
+    done once up front and retried on its own, instead of dying halfway
+    through an overnight capture run.
+    """
+    by_id: dict[str, str] = {}
+    for row in ready_rows:
+        for url in _collect_source_urls(row):
+            by_id.setdefault(rc.video_id_for_source(url), url)
+    missing = [(vid, url) for vid, url in by_id.items() if rc.find_cached_video(vid) is None]
+    print(f"prefetch: {len(by_id)} distinct source(s), {len(missing)} to download")
+    failed = 0
+    for i, (vid, url) in enumerate(missing, start=1):
+        print(f"  [{i}/{len(missing)}] {vid} {url}")
+        if rc.ensure_local_video(url) is None:
+            failed += 1
+    print("prefetch summary:", {"distinct": len(by_id), "downloaded": len(missing) - failed, "failed": failed})
+    return 0
+
+
+def _resolve_source(url: str, use_cache: bool) -> str:
+    """Prefer a locally cached copy of ``url``; fall back to the URL itself.
+
+    Falling back rather than failing is deliberate: a missing or broken
+    yt-dlp should make capture slower, not impossible.
+    """
+    if not use_cache or not rc.is_url(url):
+        return url
+    local = rc.ensure_local_video(url, quiet=True)
+    return str(local) if local is not None else url
 
 
 def main() -> int:
@@ -360,6 +374,9 @@ def main() -> int:
     if args.preflight_only:
         return 0 if not preflight_issues else 2
 
+    if args.prefetch_only:
+        return _prefetch_plan_sources(ready_rows)
+
     if preflight_issues and not args.allow_source_reuse:
         print("aborting batch due to preflight failures. Add more URLs or use --allow-source-reuse")
         return 2
@@ -421,13 +438,14 @@ def main() -> int:
             print(f"  - example {ex_idx:02d}: {indexed_key} (starting source {source_idx + 1}/{len(source_urls)})")
             example_saved = False
             for attempt_idx, source_url in enumerate(rotated_sources, start=1):
+                local_source = _resolve_source(source_url, args.video_cache)
                 cmd = [
                     sys.executable,
                     "action_recognition.py",
                     "--weights",
                     "yolo26n-pose.pt",
                     "--source",
-                    source_url,
+                    local_source,
                     "--record-reference",
                     indexed_key,
                     "--reference-capture-mode",
@@ -507,6 +525,8 @@ def main() -> int:
                     )
 
                 print(f"    attempt {attempt_idx}/{len(rotated_sources)} source={source_url}")
+                if local_source != source_url:
+                    print(f"      using cached copy: {local_source}")
                 try:
                     result = subprocess.run(cmd, cwd=project_root, timeout=1200, env=child_env)
                 except subprocess.TimeoutExpired:
