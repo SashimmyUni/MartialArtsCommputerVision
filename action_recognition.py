@@ -1372,15 +1372,21 @@ def _wrist_return_closure(seq: np.ndarray, conf_thresh: float = 0.2) -> float:
     return float(max(closures))
 
 
-def _extract_event_centered_window(
+def _event_centered_span(
     seq: np.ndarray,
     window_len: int,
     conf_thresh: float = 0.2,
-) -> np.ndarray | None:
-    """Extract a fixed-length window centered on peak wrist extension.
+) -> tuple[int, int] | None:
+    """Half-open ``[start, end)`` of the window centred on peak wrist extension.
 
     Peak is computed from the wrist (left/right) that has the largest
     displacement from its first valid point in normalized coordinates.
+
+    Split out from ``_extract_event_centered_window`` so callers that need to
+    know *where* in the buffer a window came from can ask. The cached-track
+    replay uses the span to map a window back to its source frame range and
+    reject overlapping candidates; recovering that by searching for the
+    returned array would be both slow and ambiguous.
     """
     if seq.ndim != 3 or window_len <= 0 or seq.shape[0] < window_len:
         return None
@@ -1416,11 +1422,23 @@ def _extract_event_centered_window(
     half = window_len // 2
     start = best_peak_idx - half
     start = max(0, min(start, total_frames - window_len))
-    end = start + window_len
+    return start, start + window_len
+
+
+def _extract_event_centered_window(
+    seq: np.ndarray,
+    window_len: int,
+    conf_thresh: float = 0.2,
+) -> np.ndarray | None:
+    """Fixed-length window centred on peak wrist extension, or None."""
+    span = _event_centered_span(seq, window_len, conf_thresh=conf_thresh)
+    if span is None:
+        return None
+    start, end = span
     return seq[start:end].copy()
 
 
-def _extract_stance_cycle_sequence(
+def _stance_cycle_span(
     seq: np.ndarray,
     start_threshold: float = 0.18,
     end_threshold: float = 0.12,
@@ -1428,12 +1446,15 @@ def _extract_stance_cycle_sequence(
     min_frames: int = 24,
     hold_frames: int = 4,
     conf_thresh: float = 0.2,
-) -> np.ndarray | None:
-    """Extract dynamic start/end from stance departure and return.
+) -> tuple[int, int] | None:
+    """Half-open ``[start, end)`` of the stance-departure-and-return cycle.
 
     A sequence starts when normalized pose distance from initial stance rises
     above baseline and ends after it settles back near the initial stance for a
     short hold period.
+
+    Split out from ``_extract_stance_cycle_sequence`` so the cached-track replay
+    can map a window back to its source frame range — see ``_event_centered_span``.
     """
     if seq.ndim != 3 or seq.shape[0] < max(2, min_frames):
         return None
@@ -1484,7 +1505,32 @@ def _extract_stance_cycle_sequence(
     if (end_idx - start_idx + 1) < int(min_frames):
         return None
 
-    return seq[start_idx : end_idx + 1].copy()
+    return start_idx, end_idx + 1
+
+
+def _extract_stance_cycle_sequence(
+    seq: np.ndarray,
+    start_threshold: float = 0.18,
+    end_threshold: float = 0.12,
+    peak_threshold: float = 0.30,
+    min_frames: int = 24,
+    hold_frames: int = 4,
+    conf_thresh: float = 0.2,
+) -> np.ndarray | None:
+    """Stance departure-and-return cycle sliced out of ``seq``, or None."""
+    span = _stance_cycle_span(
+        seq,
+        start_threshold=start_threshold,
+        end_threshold=end_threshold,
+        peak_threshold=peak_threshold,
+        min_frames=min_frames,
+        hold_frames=hold_frames,
+        conf_thresh=conf_thresh,
+    )
+    if span is None:
+        return None
+    start, end = span
+    return seq[start:end].copy()
 
 
 def _passes_reference_score_gate(

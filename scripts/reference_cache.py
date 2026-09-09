@@ -47,6 +47,11 @@ TRACK_CACHE_DIR = CACHE_ROOT / "tracks"
 
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v")
 
+# Bump when the *meaning* of a cached table changes — the extraction loop, the
+# stored columns, or extract_pose_instances / _sanitize_kpt_entry. Caches from
+# an older schema are ignored rather than silently replayed.
+SCHEMA_VERSION = 1
+
 _YOUTUBE_HOSTS = {"www.youtube.com", "youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be"}
 _YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
@@ -212,15 +217,26 @@ def write_track_cache(
     det_order: np.ndarray,
     track_id: np.ndarray,
     box: np.ndarray,
-    kpts: np.ndarray,
+    pose_frame_idx: np.ndarray,
+    pose_order: np.ndarray,
+    pose_kpts: np.ndarray,
     meta: dict[str, Any],
 ) -> Path:
-    """Persist one video's detections as a flat event table.
+    """Persist one video's detections as two flat event tables.
+
+    Boxes and poses are stored separately, with independent lengths, because
+    that is how ``run()`` receives them: ``extract_pose_instances`` drops any
+    instance with no confident keypoint, so on a given frame there can be fewer
+    poses than tracked boxes. ``run()`` still pairs them **positionally** (pose
+    ``i`` to box ``i``), which means a dropped instance shifts every later
+    pairing. Storing one merged row per pair would quietly repair that, and the
+    replay would then disagree with the live path. Keep the two tables and
+    reproduce the pairing instead.
 
     Flat rather than per-frame because detection counts are ragged. Row order
-    within a frame is the model's own output order and must be preserved:
-    ``action_recognition.run()`` pairs keypoints to boxes positionally, so
-    reordering rows would silently re-assign keypoints to the wrong person.
+    within a frame is the model's own output order and is load-bearing for both
+    the positional pairing above and the ``max()`` tie-break in
+    ``_select_primary_track``.
     """
     TRACK_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     out_path = track_cache_path(video_id, signature)
@@ -230,24 +246,39 @@ def write_track_cache(
         det_order=np.asarray(det_order, dtype=np.int16),
         track_id=np.asarray(track_id, dtype=np.int32),
         box=np.asarray(box, dtype=np.float32),
-        kpts=np.asarray(kpts, dtype=np.float32),
+        pose_frame_idx=np.asarray(pose_frame_idx, dtype=np.int32),
+        pose_order=np.asarray(pose_order, dtype=np.int16),
+        pose_kpts=np.asarray(pose_kpts, dtype=np.float32),
     )
     meta_out = dict(meta)
     meta_out["video_id"] = video_id
     meta_out["signature"] = signature
+    meta_out["schema_version"] = SCHEMA_VERSION
     track_meta_path(video_id, signature).write_text(
         json.dumps(meta_out, indent=2, sort_keys=True), encoding="utf-8"
     )
     return out_path
 
 
-class TrackCache:
-    """A loaded track cache, indexed by frame.
+def _frame_spans(frame_idx: np.ndarray) -> dict[int, tuple[int, int]]:
+    """Map each frame number to its ``[start, end)`` row range."""
+    spans: dict[int, tuple[int, int]] = {}
+    if frame_idx.size:
+        boundaries = np.flatnonzero(np.diff(frame_idx)) + 1
+        starts = np.concatenate(([0], boundaries))
+        ends = np.concatenate((boundaries, [frame_idx.size]))
+        for s, e in zip(starts, ends):
+            spans[int(frame_idx[s])] = (int(s), int(e))
+    return spans
 
-    ``frames_read`` is carried separately from the event table because frames
-    where the model tracked nobody produce no rows but still advance the frame
-    counter. The replay has to keep those gaps: renumbering frames would shift
-    every cooldown and window span computed from them.
+
+class TrackCache:
+    """A loaded detection table, indexed by frame.
+
+    ``frames_read`` is carried in the metadata rather than derived from the
+    tables because frames where the model tracked nobody produce no rows but
+    still advance the frame counter. Those gaps have to survive: renumbering
+    frames would shift every span and cooldown computed from them.
     """
 
     def __init__(
@@ -256,37 +287,35 @@ class TrackCache:
         det_order: np.ndarray,
         track_id: np.ndarray,
         box: np.ndarray,
-        kpts: np.ndarray,
+        pose_frame_idx: np.ndarray,
+        pose_order: np.ndarray,
+        pose_kpts: np.ndarray,
         meta: dict[str, Any],
     ) -> None:
         self.frame_idx = np.asarray(frame_idx, dtype=np.int32)
         self.det_order = np.asarray(det_order, dtype=np.int16)
         self.track_id = np.asarray(track_id, dtype=np.int32)
         self.box = np.asarray(box, dtype=np.float32)
-        self.kpts = np.asarray(kpts, dtype=np.float32)
+        self.pose_frame_idx = np.asarray(pose_frame_idx, dtype=np.int32)
+        self.pose_order = np.asarray(pose_order, dtype=np.int16)
+        self.pose_kpts = np.asarray(pose_kpts, dtype=np.float32)
         self.meta = dict(meta)
 
-        # Sort by (frame, detection order). Detection order is the model's own
-        # output order and is load-bearing: run() pairs keypoints to boxes
-        # positionally, and _select_primary_track breaks score ties with max(),
-        # which returns the first key at the maximum. Reordering rows would
-        # reassign keypoints to the wrong person and flip tie-breaks.
-        order = np.lexsort((self.det_order, self.frame_idx))
-        if not np.array_equal(order, np.arange(self.frame_idx.size)):
-            self.frame_idx = self.frame_idx[order]
-            self.det_order = self.det_order[order]
-            self.track_id = self.track_id[order]
-            self.box = self.box[order]
-            self.kpts = self.kpts[order]
+        box_order = np.lexsort((self.det_order, self.frame_idx))
+        if not np.array_equal(box_order, np.arange(self.frame_idx.size)):
+            self.frame_idx = self.frame_idx[box_order]
+            self.det_order = self.det_order[box_order]
+            self.track_id = self.track_id[box_order]
+            self.box = self.box[box_order]
 
-        # Row span per frame, so the replay can slice instead of scanning.
-        self._starts: dict[int, tuple[int, int]] = {}
-        if self.frame_idx.size:
-            boundaries = np.flatnonzero(np.diff(self.frame_idx)) + 1
-            starts = np.concatenate(([0], boundaries))
-            ends = np.concatenate((boundaries, [self.frame_idx.size]))
-            for s, e in zip(starts, ends):
-                self._starts[int(self.frame_idx[s])] = (int(s), int(e))
+        pose_sort = np.lexsort((self.pose_order, self.pose_frame_idx))
+        if not np.array_equal(pose_sort, np.arange(self.pose_frame_idx.size)):
+            self.pose_frame_idx = self.pose_frame_idx[pose_sort]
+            self.pose_order = self.pose_order[pose_sort]
+            self.pose_kpts = self.pose_kpts[pose_sort]
+
+        self._box_spans = _frame_spans(self.frame_idx)
+        self._pose_spans = _frame_spans(self.pose_frame_idx)
 
     @property
     def frame_width(self) -> int:
@@ -298,40 +327,58 @@ class TrackCache:
 
     @property
     def frames_read(self) -> int:
-        return int(self.meta.get("frames_read", int(self.frame_idx.max()) if self.frame_idx.size else 0))
+        fallback = int(self.frame_idx.max()) if self.frame_idx.size else 0
+        return int(self.meta.get("frames_read", fallback))
 
     @property
     def source(self) -> str:
         return str(self.meta.get("source", ""))
 
-    def rows_for_frame(self, frame: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Return ``(track_ids, boxes, kpts)`` for one 1-based frame number."""
-        span = self._starts.get(int(frame))
+    def boxes_for_frame(self, frame: int) -> tuple[np.ndarray, np.ndarray]:
+        """``(track_ids, boxes)`` for one 1-based frame, in model output order."""
+        span = self._box_spans.get(int(frame))
         if span is None:
-            empty_kpts = self.kpts[:0]
-            return self.track_id[:0], self.box[:0], empty_kpts
+            return self.track_id[:0], self.box[:0]
         s, e = span
-        return self.track_id[s:e], self.box[s:e], self.kpts[s:e]
+        return self.track_id[s:e], self.box[s:e]
+
+    def poses_for_frame(self, frame: int) -> np.ndarray:
+        """Surviving pose instances for one 1-based frame, in model output order.
+
+        Can be shorter than ``boxes_for_frame`` for the same frame — see
+        ``write_track_cache``.
+        """
+        span = self._pose_spans.get(int(frame))
+        if span is None:
+            return self.pose_kpts[:0]
+        s, e = span
+        return self.pose_kpts[s:e]
 
 
 def read_track_cache(video_id: str, signature: str) -> TrackCache | None:
-    """Load a cached track table, or None when it is absent or unreadable."""
+    """Load a cached detection table, or None when absent or unreadable."""
     npz_path = track_cache_path(video_id, signature)
     meta_path = track_meta_path(video_id, signature)
     if not npz_path.exists() or not meta_path.exists():
         return None
     try:
         with np.load(npz_path) as data:
-            frame_idx = data["frame_idx"]
-            det_order = data["det_order"]
-            track_id = data["track_id"]
-            box = data["box"]
-            kpts = data["kpts"]
+            arrays = {k: data[k] for k in
+                      ("frame_idx", "det_order", "track_id", "box",
+                       "pose_frame_idx", "pose_order", "pose_kpts")}
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
     except (OSError, KeyError, ValueError, json.JSONDecodeError) as exc:
         print(f"warning: ignoring unreadable track cache {npz_path.name}: {exc}")
         return None
-    return TrackCache(frame_idx, det_order, track_id, box, kpts, meta)
+
+    if int(meta.get("schema_version", -1)) != SCHEMA_VERSION:
+        print(
+            f"warning: ignoring track cache {npz_path.name} written by schema "
+            f"v{meta.get('schema_version')} (this build writes v{SCHEMA_VERSION})"
+        )
+        return None
+
+    return TrackCache(meta=meta, **arrays)
 
 
 def cache_covers_frames(cache: "TrackCache", needed_frames: int) -> bool:
@@ -522,3 +569,55 @@ def plan_rows(plan_path: Path, ready_only: bool = True) -> list[dict[str, str]]:
             row_with_meta["_csv_line"] = str(csv_line)
             rows.append(row_with_meta)
     return rows
+
+
+def find_track_caches(video_id: str) -> list[tuple[str, Path]]:
+    """All cached extractions for one video, newest first, as ``(signature, path)``.
+
+    Lets the selection stage locate a cached table without knowing the
+    extraction parameters — it has no model to ask, and requiring the caller to
+    restate weights/imgsz/device just to read a cache would be a trap.
+    """
+    if not TRACK_CACHE_DIR.exists():
+        return []
+    prefix = f"{video_id}__"
+    found = [
+        (p.stem[len(prefix):], p)
+        for p in TRACK_CACHE_DIR.glob(f"{prefix}*.npz")
+        if p.stem.startswith(prefix)
+    ]
+    found.sort(key=lambda item: item[1].stat().st_mtime, reverse=True)
+    return found
+
+
+def load_best_track_cache(
+    video_id: str,
+    *,
+    signature: str | None = None,
+    needed_frames: int = 0,
+) -> "TrackCache | None":
+    """Load a cached extraction for ``video_id``.
+
+    With an explicit ``signature``, only that one will do. Otherwise the newest
+    extraction that covers ``needed_frames`` wins, falling back to the newest
+    readable one so a short cache is used with a warning rather than silently
+    ignored.
+    """
+    if signature is not None:
+        return read_track_cache(video_id, signature)
+
+    fallback = None
+    for sig, _path in find_track_caches(video_id):
+        cache = read_track_cache(video_id, sig)
+        if cache is None:
+            continue
+        if cache_covers_frames(cache, needed_frames):
+            return cache
+        if fallback is None:
+            fallback = cache
+    if fallback is not None:
+        print(
+            f"  note: cached extraction for {video_id} covers only {fallback.frames_read} frame(s); "
+            f"using it anyway (re-run extract_tracks.py with a larger --max-frames for more)"
+        )
+    return fallback

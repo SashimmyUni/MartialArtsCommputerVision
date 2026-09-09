@@ -117,27 +117,54 @@ def test_signature_ignores_selection_parameters() -> None:
     print(f"OK: no selection parameter reaches the cache key ({len(params)} key inputs)")
 
 
-def _synthetic_table(n_frames: int = 6, people: int = 2):
+def _synthetic_table(n_frames: int = 6, people: int = 2, drop_pose_on: int | None = None):
+    """Build a small detection table.
+
+    ``drop_pose_on`` omits the *first* pose instance on that frame while keeping
+    both boxes, reproducing what ``extract_pose_instances`` does when an
+    instance has no confident keypoint.
+    """
     rng = np.random.default_rng(0)
-    frame_idx, det_order, track_id, box, kpts = [], [], [], [], []
+    frame_idx, det_order, track_id, box = [], [], [], []
+    pose_frame_idx, pose_order, pose_kpts = [], [], []
     for f in range(1, n_frames + 1):
         for d in range(people):
             frame_idx.append(f)
             det_order.append(d)
             track_id.append(d + 1)
             box.append([10.0 * d, 20.0 * d, 10.0 * d + 50, 20.0 * d + 90])
-            kpts.append(rng.random((17, 3), dtype=np.float32))
-    return (
-        np.array(frame_idx, dtype=np.int32),
-        np.array(det_order, dtype=np.int16),
-        np.array(track_id, dtype=np.int32),
-        np.array(box, dtype=np.float32),
-        np.stack(kpts).astype(np.float32),
+        kept = 0
+        for d in range(people):
+            if drop_pose_on == f and d == 0:
+                continue
+            pose_frame_idx.append(f)
+            pose_order.append(kept)
+            pose_kpts.append(rng.random((17, 3), dtype=np.float32))
+            kept += 1
+    return dict(
+        frame_idx=np.array(frame_idx, dtype=np.int32),
+        det_order=np.array(det_order, dtype=np.int16),
+        track_id=np.array(track_id, dtype=np.int32),
+        box=np.array(box, dtype=np.float32),
+        pose_frame_idx=np.array(pose_frame_idx, dtype=np.int32),
+        pose_order=np.array(pose_order, dtype=np.int16),
+        pose_kpts=np.stack(pose_kpts).astype(np.float32),
     )
 
 
+def _write_and_read(tables, meta):
+    with tempfile.TemporaryDirectory() as tmp:
+        original_dir = rc.TRACK_CACHE_DIR
+        rc.TRACK_CACHE_DIR = Path(tmp)
+        try:
+            rc.write_track_cache("vid", "sig", meta=meta, **tables)
+            return rc.read_track_cache("vid", "sig")
+        finally:
+            rc.TRACK_CACHE_DIR = original_dir
+
+
 def test_track_cache_round_trip() -> None:
-    frame_idx, det_order, track_id, box, kpts = _synthetic_table()
+    tables = _synthetic_table()
     meta = {
         "frame_width": 1920,
         "frame_height": 1080,
@@ -146,44 +173,49 @@ def test_track_cache_round_trip() -> None:
         "reached_eof": True,
         "source": "synthetic",
     }
-
-    with tempfile.TemporaryDirectory() as tmp:
-        original_dir = rc.TRACK_CACHE_DIR
-        rc.TRACK_CACHE_DIR = Path(tmp)
-        try:
-            rc.write_track_cache(
-                "vid",
-                "sig",
-                frame_idx=frame_idx,
-                det_order=det_order,
-                track_id=track_id,
-                box=box,
-                kpts=kpts,
-                meta=meta,
-            )
-            loaded = rc.read_track_cache("vid", "sig")
-        finally:
-            rc.TRACK_CACHE_DIR = original_dir
+    loaded = _write_and_read(tables, meta)
 
     assert loaded is not None, "round trip lost the cache"
-    assert np.array_equal(loaded.frame_idx, frame_idx)
-    assert np.array_equal(loaded.det_order, det_order)
-    assert np.array_equal(loaded.track_id, track_id)
-    assert np.allclose(loaded.box, box)
-    assert np.allclose(loaded.kpts, kpts)
+    assert np.array_equal(loaded.frame_idx, tables["frame_idx"])
+    assert np.array_equal(loaded.det_order, tables["det_order"])
+    assert np.array_equal(loaded.track_id, tables["track_id"])
+    assert np.allclose(loaded.box, tables["box"])
+    assert np.allclose(loaded.pose_kpts, tables["pose_kpts"])
     assert loaded.frame_width == 1920 and loaded.frame_height == 1080
     assert loaded.frames_read == 6
 
-    # Per-frame lookup returns the frame's rows, in the model's own order.
-    ids, boxes, frame_kpts = loaded.rows_for_frame(3)
+    ids, boxes = loaded.boxes_for_frame(3)
     assert list(ids) == [1, 2], f"expected both people on frame 3, got {ids}"
-    assert boxes.shape == (2, 4) and frame_kpts.shape == (2, 17, 3)
+    assert boxes.shape == (2, 4)
+    assert loaded.poses_for_frame(3).shape == (2, 17, 3)
 
     # A frame nobody was tracked on yields nothing rather than raising: those
     # gaps are real and the replay must keep them.
-    ids, boxes, frame_kpts = loaded.rows_for_frame(99)
-    assert ids.size == 0 and boxes.shape == (0, 4) and frame_kpts.shape[0] == 0
+    ids, boxes = loaded.boxes_for_frame(99)
+    assert ids.size == 0 and boxes.shape == (0, 4)
+    assert loaded.poses_for_frame(99).shape[0] == 0
     print("OK: track cache round trip preserves rows, order and frame gaps")
+
+
+def test_pose_table_may_be_shorter_than_box_table() -> None:
+    """A filtered-out pose must stay filtered out.
+
+    extract_pose_instances drops instances with no confident keypoint, but
+    run() still pairs pose i to box i. Storing merged pairs would silently
+    repair that mismatch and the replay would diverge from the live path.
+    """
+    tables = _synthetic_table(n_frames=4, people=2, drop_pose_on=2)
+    loaded = _write_and_read(tables, {"frame_width": 640, "frame_height": 480, "frames_read": 4})
+    assert loaded is not None
+
+    ids, boxes = loaded.boxes_for_frame(2)
+    poses = loaded.poses_for_frame(2)
+    assert len(ids) == 2, "both boxes should survive"
+    assert poses.shape[0] == 1, "one pose instance was dropped and must stay dropped"
+
+    ids, _ = loaded.boxes_for_frame(3)
+    assert loaded.poses_for_frame(3).shape[0] == len(ids) == 2
+    print("OK: pose table stays independent of the box table")
 
 
 def test_missing_cache_reads_as_none() -> None:
@@ -199,11 +231,11 @@ def test_missing_cache_reads_as_none() -> None:
 
 def test_frame_coverage() -> None:
     """A cache that stopped early covers a smaller request, not a larger one."""
-    frame_idx, det_order, track_id, box, kpts = _synthetic_table(n_frames=3)
+    tables = _synthetic_table(n_frames=3)
 
     partial = rc.TrackCache(
-        frame_idx, det_order, track_id, box, kpts,
-        {"frame_width": 640, "frame_height": 480, "frames_read": 1800, "reached_eof": False},
+        **tables,
+        meta={"frame_width": 640, "frame_height": 480, "frames_read": 1800, "reached_eof": False},
     )
     assert rc.cache_covers_frames(partial, 1800)
     assert rc.cache_covers_frames(partial, 900)
@@ -211,8 +243,8 @@ def test_frame_coverage() -> None:
     assert not rc.cache_covers_frames(partial, 0), "'whole video' is not covered by a truncated cache"
 
     complete = rc.TrackCache(
-        frame_idx, det_order, track_id, box, kpts,
-        {"frame_width": 640, "frame_height": 480, "frames_read": 420, "reached_eof": True},
+        **tables,
+        meta={"frame_width": 640, "frame_height": 480, "frames_read": 420, "reached_eof": True},
     )
     assert rc.cache_covers_frames(complete, 0), "a full extraction covers any request"
     assert rc.cache_covers_frames(complete, 100000)
@@ -244,6 +276,7 @@ def main() -> None:
     test_signature_covers_detection_parameters()
     test_signature_ignores_selection_parameters()
     test_track_cache_round_trip()
+    test_pose_table_may_be_shorter_than_box_table()
     test_missing_cache_reads_as_none()
     test_frame_coverage()
     test_plan_parsing()
