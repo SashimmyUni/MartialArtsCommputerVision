@@ -23,6 +23,8 @@ from ultralytics.utils.plotting import Annotator
 from ultralytics.utils.tqdm import TQDM
 from ultralytics.utils.torch_utils import select_device
 
+from technique_catalog import classifier_labels, focus_joints_group, technique_family
+
 
 MARTIAL_ARTS_LABELS = [
     "fighting stance",
@@ -39,6 +41,17 @@ MARTIAL_ARTS_LABELS = [
     "elbow strike",
     "axe kick",
 ]
+
+#: Zero-shot labels for the karate catalogue in ``reference_poses/karate_techniques.csv``.
+#: Karate labels are prefixed with "karate" in the catalogue so they stay distinct from
+#: their kickboxing namesakes above when both label sets are used together.
+KARATE_LABELS = classifier_labels("core")
+
+LABEL_SETS = {
+    "martial_arts": MARTIAL_ARTS_LABELS,
+    "karate": KARATE_LABELS,
+    "all": MARTIAL_ARTS_LABELS + KARATE_LABELS,
+}
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
@@ -1276,8 +1289,28 @@ _ANGLE_DEF_CATEGORIES: dict[str, list[tuple[int, int, int]]] = {
 }
 
 
+#: Family -> angle-definition category. Strikes and blocks are arm-driven, so they
+#: score against the same joint angles as punches.
+_FAMILY_ANGLE_CATEGORIES = {
+    "punch": "punch",
+    "strike": "punch",
+    "block": "punch",
+    "kick": "kick",
+    "stance": "other",
+}
+
+
 def _technique_angle_category(technique: str) -> str:
-    """Return which of ``_ANGLE_DEF_CATEGORIES`` applies to a technique name."""
+    """Return which of ``_ANGLE_DEF_CATEGORIES`` applies to a technique name.
+
+    Catalogued techniques (see ``technique_catalog``) are classified by their
+    recorded family; anything else falls back to matching English keywords in
+    the name, which is all the kickboxing technique keys ever needed.
+    """
+    family = technique_family(technique)
+    if family is not None:
+        return _FAMILY_ANGLE_CATEGORIES.get(family, "other")
+
     t = technique.lower().replace("-", " ").strip()
     if "jab" in t or "cross" in t or "hook" in t:
         return "punch"
@@ -1660,6 +1693,9 @@ def generate_feedback(
             to skip renormalizing when the caller already has it this frame.
     """
     t = technique.lower().replace("-", " ").strip()
+    # Catalogued karate techniques carry no English keyword ("mae_geri", "gyaku_zuki"),
+    # so their family decides which rule set below applies.
+    family = technique_family(technique)
     seq = user_norm if user_norm is not None else normalize_pose_sequence(user_sequence)
     if len(seq) == 0:
         return ["No pose detected"]
@@ -1674,7 +1710,12 @@ def generate_feedback(
             return float("nan")
         return _joint_angle_deg(pa, pb, pc)
 
-    if "jab" in t or "cross" in t or "hook" in t:
+    arm_technique = family in {"punch", "strike", "block"} or (
+        family is None and ("jab" in t or "cross" in t or "hook" in t)
+    )
+    leg_technique = family == "kick" or (family is None and "kick" in t)
+
+    if arm_technique:
         lelbow = angle(5, 7, 9)
         relbow = angle(6, 8, 10)
         if np.isfinite(lelbow) and np.isfinite(relbow):
@@ -1686,7 +1727,7 @@ def generate_feedback(
                 msgs.append("Extend your punching arm more")
             if guard_wrist is not None and guard_shoulder is not None and guard_wrist[1] > guard_shoulder[1] + 0.15:
                 msgs.append("Keep your guard hand higher")
-    elif "kick" in t:
+    elif leg_technique:
         lknee = angle(11, 13, 15)
         rknee = angle(12, 14, 16)
         if np.isfinite(lknee) and np.isfinite(rknee):
@@ -1745,8 +1786,21 @@ def _pose_center_and_scale(frame_kpts: np.ndarray, conf_thresh: float = 0.2) -> 
     return center.astype(np.float32), max(scale, 1.0)
 
 
+_UPPER_BODY_JOINTS = [5, 6, 7, 8, 9, 10]
+_LOWER_BODY_JOINTS = [11, 12, 13, 14, 15, 16]
+_FULL_BODY_JOINTS = _UPPER_BODY_JOINTS + _LOWER_BODY_JOINTS
+
+
 def _technique_focus_joint_indices(technique: str) -> list[int]:
     """Return joints that matter most for visual correction arrows."""
+    group = focus_joints_group(technique)
+    if group is not None:
+        return {
+            "upper": _UPPER_BODY_JOINTS,
+            "lower": _LOWER_BODY_JOINTS,
+            "full": _FULL_BODY_JOINTS,
+        }[group]
+
     t = _normalize_key(technique)
     if "kick" in t:
         return [11, 12, 13, 14, 15, 16]
@@ -3207,8 +3261,19 @@ def parse_opt() -> argparse.Namespace:
         "--labels",
         nargs="+",
         type=str,
-        default=MARTIAL_ARTS_LABELS.copy(),
-        help="labels for zero-shot video classification",
+        default=None,
+        help="labels for zero-shot video classification (overrides --label-set)",
+    )
+    parser.add_argument(
+        "--label-set",
+        type=str,
+        choices=sorted(LABEL_SETS),
+        default="martial_arts",
+        help=(
+            "named zero-shot label set to use when --labels is not given: 'martial_arts' (default, "
+            "the kickboxing labels), 'karate' (core techniques from reference_poses/karate_techniques.csv), "
+            "or 'all'"
+        ),
     )
     parser.add_argument(
         "--save-kpts-dir",
@@ -3556,7 +3621,12 @@ def main(opt: argparse.Namespace) -> None:
         if source and not source.isdigit() and not source.startswith('http'):
             from pathlib import Path
             opt.run_name = Path(source).stem
-    run(**vars(opt))
+    options = vars(opt).copy()
+    # --label-set is CLI sugar for --labels; run() only knows about the label list.
+    label_set = options.pop("label_set", "martial_arts")
+    if not options.get("labels"):
+        options["labels"] = LABEL_SETS[label_set].copy()
+    run(**options)
 
 
 if __name__ == "__main__":
