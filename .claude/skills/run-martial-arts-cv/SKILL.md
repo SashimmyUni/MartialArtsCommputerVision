@@ -145,14 +145,15 @@ exercised in this session** — use the driver instead.
 ## Gotchas
 
 1. **Never invoke `action_recognition.py` bare.** `save_kpts_dir` defaults to
-   `PROJECT_ROOT/"keypoints"` (`action_recognition.py:2432`), and
+   `PROJECT_ROOT/"keypoints"` (in `run()`; `grep -n 'save_kpts_dir is None'`), and
    `keypoints/track_*.npy` are the committed fixtures that
    `benchmark_scoring.py` and `test_scoring_equivalence.py` read. A plain run
    silently overwrites them. The driver redirects `--save-kpts-dir` every time.
 2. **Relative path flags resolve against the repo, not your cwd.**
-   `_resolve_project_path` (`action_recognition.py:46`) is applied to
+   `_resolve_project_path` (`grep -n '_resolve_project_path'`) is applied to
    `--weights`, `--reference-dir`, `--storage-root`, `--output-path`,
-   `--save-kpts-dir` and `--source` at lines 2339–2359. `--storage-root data`
+   `--save-kpts-dir` and `--source` in one block at the top of `run()`.
+   `--storage-root data`
    writes into the repo no matter where you invoke it from. The driver passes
    absolute paths for all of them.
 3. **The fixture is a still photo being panned**, so the pose never changes.
@@ -171,7 +172,8 @@ exercised in this session** — use the driver instead.
    panel's third line**, hiding the coaching tip. Use `run --clean`
    (`--no-boxes`) whenever the panel text matters.
 7. **The ghost pose only renders when the score is below threshold** — it is
-   gated on `not is_correct` (`action_recognition.py:3016`). A screenshot with
+   gated on `not is_correct` (`grep -n '_draw_reference_ghost'`, at the call
+   site in the drawing block, not the definition). A screenshot with
    no green skeleton means the athlete scored as correct, not that the overlay
    broke.
 8. **`--disable-video-classifier` is effectively mandatory.** Without it the
