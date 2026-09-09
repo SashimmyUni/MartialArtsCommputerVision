@@ -247,6 +247,11 @@ def main() -> int:
             "1",
             "--reference-capture-cooldown-frames",
             "24",
+            # Without this the CLI default (--save-kpts-dir "keypoints") applies, and the
+            # committed fixture directory used by test_scoring_equivalence.py and
+            # benchmark_scoring.py gets overwritten by every capture run.
+            "--save-kpts-dir",
+            str(Path("data") / "capture_keypoints" / record_reference),
             "--disable-video-classifier",
             "--no-display",
             # Only removes work that is discarded during capture: the default

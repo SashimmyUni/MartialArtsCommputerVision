@@ -442,8 +442,14 @@ def main() -> int:
                     str(profile["num_video_sequence_samples"]),
                     "--skip-frame",
                     "1",
+                    # NOT "keypoints": that directory is committed and is the pinned
+                    # fixture for test_scoring_equivalence.py and benchmark_scoring.py.
+                    # Capture runs used to overwrite it on every one of the ~208 jobs
+                    # (and, under --jobs, two at once), silently invalidating the only
+                    # guard the scoring core has. Per-key subdirectory under gitignored
+                    # data/ so concurrent jobs cannot collide either.
                     "--save-kpts-dir",
-                    "keypoints",
+                    str(Path("data") / "capture_keypoints" / indexed_key),
                     "--record-reference-max-saves",
                     "1",
                     "--reference-capture-cooldown-frames",
