@@ -2146,6 +2146,7 @@ def run(
     reference_dir: str = "reference_poses",
     target_technique: str = "jab",
     trainer_enabled: bool = True,
+    capture_only: bool = False,
     record_reference: str | None = None,
     reference_capture_mode: str = "first_valid",
     reference_sequence_mode: str = "fixed",
@@ -2222,6 +2223,10 @@ def run(
         target_technique (str): Technique name to score against, e.g. ``jab`` or
             ``front_kick``.
         trainer_enabled (bool): Enable live pose scoring and feedback.
+        capture_only (bool): Skip live trainer scoring/feedback/overlay while keeping the
+            reference-capture path active. Use for batch reference capture, where the live
+            score is computed and then thrown away. Not the same as ``trainer_enabled=False``,
+            which would disable capture too.
         record_reference (str, optional): If provided, records a tracked pose sequence
             as a new reference under this technique name.
         reference_capture_mode (str): Reference capture strategy. ``first_valid`` saves
@@ -2308,6 +2313,12 @@ def run(
         raise ValueError("--score-topk must be >= 0")
     if ref_canonical_len < 0:
         raise ValueError("--ref-canonical-len must be >= 0")
+
+    # An empty/"none" --output-path means "write no video". The CLI default is a real
+    # filename, so without this there is no way to turn the writer off, and batch capture
+    # runs encode a full annotated mp4 nobody reads (and, run concurrently, race on it).
+    if isinstance(output_path, str) and output_path.strip().lower() in {"", "none", "null", "off"}:
+        output_path = None
 
     if fast_mode:
         # Preset tuned for throughput: disable expensive visualization/classifier paths.
@@ -2842,7 +2853,11 @@ def run(
                                             _exit_after_save = True
 
                             technique = _normalize_key(target_technique)
-                            if technique in references:
+                            # --capture-only skips live scoring/feedback/overlay: during batch
+                            # reference capture the score is computed and immediately discarded,
+                            # and it is a full _best_reference_match over the bank per tick.
+                            # Capture itself is unaffected — it runs above, before this block.
+                            if technique in references and not capture_only:
                                 # --score-every > 1 decouples scoring cadence from --skip-frame:
                                 # trainer_state simply keeps its last value on skipped ticks, so
                                 # the overlay/panel keeps showing the most recent score. Default
@@ -3177,7 +3192,12 @@ def parse_opt() -> argparse.Namespace:
         default="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         help="video file path, youtube URL, or webcam index (e.g. 0)",
     )
-    parser.add_argument("--output-path", type=str, default="output_video.mp4", help="output video file path")
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        default="output_video.mp4",
+        help='output video file path; pass "" (or "none") to write no video',
+    )
     parser.add_argument(
         "--crop-margin-percentage", type=int, default=10, help="percentage of margin to add around detected objects"
     )
@@ -3259,6 +3279,15 @@ def parse_opt() -> argparse.Namespace:
         dest="trainer_enabled",
         action="store_false",
         help="disable live virtual-trainer scoring and feedback",
+    )
+    parser.add_argument(
+        "--capture-only",
+        action="store_true",
+        help=(
+            "skip live trainer scoring/feedback/overlay but keep reference capture running. "
+            "For batch capture, where the live score is computed and thrown away. Use this "
+            "rather than --disable-trainer, which also disables capture"
+        ),
     )
     parser.add_argument(
         "--record-reference",

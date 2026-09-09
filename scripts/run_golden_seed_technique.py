@@ -249,6 +249,15 @@ def main() -> int:
             "24",
             "--disable-video-classifier",
             "--no-display",
+            # Only removes work that is discarded during capture: the default
+            # --output-path encodes a full annotated mp4, --no-display gates only
+            # cv2.imshow (boxes/overlay were still drawn every frame), and
+            # --capture-only skips the live trainer score. Capture is unaffected.
+            "--output-path",
+            "",
+            "--no-boxes",
+            "--no-overlay-pose",
+            "--capture-only",
             "--auto-exit-after-reference",
             "--reference-search-max-frames",
             str(args.reference_search_max_frames if args.strict_capture else 0),

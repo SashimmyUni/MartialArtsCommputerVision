@@ -162,6 +162,15 @@ def parse_args() -> argparse.Namespace:
         help="allow reusing source URLs when fewer distinct URLs are available than needed examples",
     )
     parser.add_argument(
+        "--fp16",
+        action="store_true",
+        help=(
+            "run the pose model in half precision on CUDA. Faster, but keypoints can shift in "
+            "the last decimals, so captured windows may differ slightly from an FP32 run "
+            "(default: off, matching prior behaviour)"
+        ),
+    )
+    parser.add_argument(
         "--preflight-only",
         action="store_true",
         help="run CSV source-diversity validation and exit without starting capture",
@@ -441,6 +450,19 @@ def main() -> int:
                     "24",
                     "--disable-video-classifier",
                     "--no-display",
+                    # Everything below this line only removes work whose result is
+                    # discarded during capture: the default --output-path writes a full
+                    # annotated mp4 nobody reads (and concurrent --jobs workers raced on
+                    # the same file), --no-display gates only cv2.imshow so boxes/overlay
+                    # were still drawn every frame, and --capture-only skips the live
+                    # trainer score that is computed and thrown away. Capture itself is
+                    # untouched: --capture-only is not --disable-trainer, which would
+                    # disable capture too.
+                    "--output-path",
+                    "",
+                    "--no-boxes",
+                    "--no-overlay-pose",
+                    "--capture-only",
                     "--auto-exit-after-reference",
                     "--reference-search-max-frames",
                     "1800",
@@ -464,6 +486,8 @@ def main() -> int:
                     "--ref-stance-hold-frames",
                     str(int(profile['ref_stance_hold_frames'])),
                 ]
+                if args.fp16:
+                    cmd.append("--fp16")
                 if capture_seed_reference_dir:
                     cmd.extend(
                         [
