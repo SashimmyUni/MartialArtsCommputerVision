@@ -1405,15 +1405,21 @@ def _wrist_return_closure(seq: np.ndarray, conf_thresh: float = 0.2) -> float:
     return float(max(closures))
 
 
-def _extract_event_centered_window(
+def _event_centered_span(
     seq: np.ndarray,
     window_len: int,
     conf_thresh: float = 0.2,
-) -> np.ndarray | None:
-    """Extract a fixed-length window centered on peak wrist extension.
+) -> tuple[int, int] | None:
+    """Half-open ``[start, end)`` of the window centred on peak wrist extension.
 
     Peak is computed from the wrist (left/right) that has the largest
     displacement from its first valid point in normalized coordinates.
+
+    Split out from ``_extract_event_centered_window`` so callers that need to
+    know *where* in the buffer a window came from can ask. The cached-track
+    replay uses the span to map a window back to its source frame range and
+    reject overlapping candidates; recovering that by searching for the
+    returned array would be both slow and ambiguous.
     """
     if seq.ndim != 3 or window_len <= 0 or seq.shape[0] < window_len:
         return None
@@ -1449,11 +1455,23 @@ def _extract_event_centered_window(
     half = window_len // 2
     start = best_peak_idx - half
     start = max(0, min(start, total_frames - window_len))
-    end = start + window_len
+    return start, start + window_len
+
+
+def _extract_event_centered_window(
+    seq: np.ndarray,
+    window_len: int,
+    conf_thresh: float = 0.2,
+) -> np.ndarray | None:
+    """Fixed-length window centred on peak wrist extension, or None."""
+    span = _event_centered_span(seq, window_len, conf_thresh=conf_thresh)
+    if span is None:
+        return None
+    start, end = span
     return seq[start:end].copy()
 
 
-def _extract_stance_cycle_sequence(
+def _stance_cycle_span(
     seq: np.ndarray,
     start_threshold: float = 0.18,
     end_threshold: float = 0.12,
@@ -1461,12 +1479,15 @@ def _extract_stance_cycle_sequence(
     min_frames: int = 24,
     hold_frames: int = 4,
     conf_thresh: float = 0.2,
-) -> np.ndarray | None:
-    """Extract dynamic start/end from stance departure and return.
+) -> tuple[int, int] | None:
+    """Half-open ``[start, end)`` of the stance-departure-and-return cycle.
 
     A sequence starts when normalized pose distance from initial stance rises
     above baseline and ends after it settles back near the initial stance for a
     short hold period.
+
+    Split out from ``_extract_stance_cycle_sequence`` so the cached-track replay
+    can map a window back to its source frame range — see ``_event_centered_span``.
     """
     if seq.ndim != 3 or seq.shape[0] < max(2, min_frames):
         return None
@@ -1517,7 +1538,32 @@ def _extract_stance_cycle_sequence(
     if (end_idx - start_idx + 1) < int(min_frames):
         return None
 
-    return seq[start_idx : end_idx + 1].copy()
+    return start_idx, end_idx + 1
+
+
+def _extract_stance_cycle_sequence(
+    seq: np.ndarray,
+    start_threshold: float = 0.18,
+    end_threshold: float = 0.12,
+    peak_threshold: float = 0.30,
+    min_frames: int = 24,
+    hold_frames: int = 4,
+    conf_thresh: float = 0.2,
+) -> np.ndarray | None:
+    """Stance departure-and-return cycle sliced out of ``seq``, or None."""
+    span = _stance_cycle_span(
+        seq,
+        start_threshold=start_threshold,
+        end_threshold=end_threshold,
+        peak_threshold=peak_threshold,
+        min_frames=min_frames,
+        hold_frames=hold_frames,
+        conf_thresh=conf_thresh,
+    )
+    if span is None:
+        return None
+    start, end = span
+    return seq[start:end].copy()
 
 
 def _passes_reference_score_gate(
@@ -2200,6 +2246,7 @@ def run(
     reference_dir: str = "reference_poses",
     target_technique: str = "jab",
     trainer_enabled: bool = True,
+    capture_only: bool = False,
     record_reference: str | None = None,
     reference_capture_mode: str = "first_valid",
     reference_sequence_mode: str = "fixed",
@@ -2276,6 +2323,10 @@ def run(
         target_technique (str): Technique name to score against, e.g. ``jab`` or
             ``front_kick``.
         trainer_enabled (bool): Enable live pose scoring and feedback.
+        capture_only (bool): Skip live trainer scoring/feedback/overlay while keeping the
+            reference-capture path active. Use for batch reference capture, where the live
+            score is computed and then thrown away. Not the same as ``trainer_enabled=False``,
+            which would disable capture too.
         record_reference (str, optional): If provided, records a tracked pose sequence
             as a new reference under this technique name.
         reference_capture_mode (str): Reference capture strategy. ``first_valid`` saves
@@ -2362,6 +2413,12 @@ def run(
         raise ValueError("--score-topk must be >= 0")
     if ref_canonical_len < 0:
         raise ValueError("--ref-canonical-len must be >= 0")
+
+    # An empty/"none" --output-path means "write no video". The CLI default is a real
+    # filename, so without this there is no way to turn the writer off, and batch capture
+    # runs encode a full annotated mp4 nobody reads (and, run concurrently, race on it).
+    if isinstance(output_path, str) and output_path.strip().lower() in {"", "none", "null", "off"}:
+        output_path = None
 
     if fast_mode:
         # Preset tuned for throughput: disable expensive visualization/classifier paths.
@@ -2896,7 +2953,11 @@ def run(
                                             _exit_after_save = True
 
                             technique = _normalize_key(target_technique)
-                            if technique in references:
+                            # --capture-only skips live scoring/feedback/overlay: during batch
+                            # reference capture the score is computed and immediately discarded,
+                            # and it is a full _best_reference_match over the bank per tick.
+                            # Capture itself is unaffected — it runs above, before this block.
+                            if technique in references and not capture_only:
                                 # --score-every > 1 decouples scoring cadence from --skip-frame:
                                 # trainer_state simply keeps its last value on skipped ticks, so
                                 # the overlay/panel keeps showing the most recent score. Default
@@ -3231,7 +3292,12 @@ def parse_opt() -> argparse.Namespace:
         default="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         help="video file path, youtube URL, or webcam index (e.g. 0)",
     )
-    parser.add_argument("--output-path", type=str, default="output_video.mp4", help="output video file path")
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        default="output_video.mp4",
+        help='output video file path; pass "" (or "none") to write no video',
+    )
     parser.add_argument(
         "--crop-margin-percentage", type=int, default=10, help="percentage of margin to add around detected objects"
     )
@@ -3324,6 +3390,15 @@ def parse_opt() -> argparse.Namespace:
         dest="trainer_enabled",
         action="store_false",
         help="disable live virtual-trainer scoring and feedback",
+    )
+    parser.add_argument(
+        "--capture-only",
+        action="store_true",
+        help=(
+            "skip live trainer scoring/feedback/overlay but keep reference capture running. "
+            "For batch capture, where the live score is computed and thrown away. Use this "
+            "rather than --disable-trainer, which also disables capture"
+        ),
     )
     parser.add_argument(
         "--record-reference",

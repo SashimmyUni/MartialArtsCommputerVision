@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import csv
 import os
-import re
 import subprocess
 import sys
 import threading
@@ -13,9 +12,11 @@ from pathlib import Path
 
 from ultralytics.utils.tqdm import TQDM
 
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+import reference_cache as rc  # noqa: E402  (needs SCRIPT_DIR on sys.path)
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -175,6 +176,57 @@ def parse_args() -> argparse.Namespace:
         help="allow reusing source URLs when fewer distinct URLs are available than needed examples",
     )
     parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help=(
+            "use the original flow: one action_recognition.py subprocess per saved example, "
+            "re-decoding and re-inferring a video for each one. Kept for comparison — the "
+            "staged pipeline should produce the same references far more cheaply"
+        ),
+    )
+    parser.add_argument(
+        "--max-windows-per-video",
+        type=int,
+        default=1,
+        help=(
+            "staged pipeline: windows one video may contribute to a row before other sources "
+            "are tried (default: 1, keeping one example per video as before; 0 = unlimited)"
+        ),
+    )
+    parser.add_argument(
+        "--score-topk",
+        type=int,
+        default=0,
+        help=(
+            "staged pipeline: cosine-prescreen the reference bank and only DTW the top K when "
+            "ranking candidates (default: 0 = exact, matching the legacy path)"
+        ),
+    )
+    parser.add_argument(
+        "--no-video-cache",
+        dest="video_cache",
+        action="store_false",
+        help=(
+            "stream sources straight from YouTube instead of downloading them once into "
+            "cache/videos/ first. Streaming is what made long batches fragile (a dropped "
+            "connection kills the run) and re-fetched videos shared across plan rows"
+        ),
+    )
+    parser.add_argument(
+        "--prefetch-only",
+        action="store_true",
+        help="download every source the plan names into cache/videos/, then exit without capturing",
+    )
+    parser.add_argument(
+        "--fp16",
+        action="store_true",
+        help=(
+            "run the pose model in half precision on CUDA. Faster, but keypoints can shift in "
+            "the last decimals, so captured windows may differ slightly from an FP32 run "
+            "(default: off, matching prior behaviour)"
+        ),
+    )
+    parser.add_argument(
         "--preflight-only",
         action="store_true",
         help="run CSV source-diversity validation and exit without starting capture",
@@ -199,45 +251,9 @@ def _existing_angle_examples(technique_dir: Path, angle: str) -> list[Path]:
     files.extend(sorted(technique_dir.glob(f"{angle}_*.npy")))
     return files
 
-def _parse_source_urls(raw_source: str) -> list[str]:
-    """Parse one or more candidate source URLs from CSV field.
-
-    Supports separators: newline, comma, semicolon, and pipe.
-    """
-    if not raw_source:
-        return []
-    parts = [p.strip() for p in re.split(r"[\n,;|]+", raw_source) if p.strip()]
-    # preserve order while de-duplicating
-    seen: set[str] = set()
-    unique: list[str] = []
-    for p in parts:
-        if p not in seen:
-            seen.add(p)
-            unique.append(p)
-    return unique
-
-
-def _collect_source_urls(row: dict[str, str]) -> list[str]:
-    """Collect distinct source URLs from explicit source_url_1..source_url_4 columns and legacy source_url."""
-    urls: list[str] = []
-
-    for i in range(1, 5):
-        cell = (row.get(f"source_url_{i}") or "").strip()
-        if cell:
-            urls.extend(_parse_source_urls(cell))
-
-    # Backward compatibility with legacy single-column source_url and delimiter-packed values.
-    legacy = (row.get("source_url") or "").strip()
-    if legacy:
-        urls.extend(_parse_source_urls(legacy))
-
-    seen: set[str] = set()
-    unique: list[str] = []
-    for u in urls:
-        if u not in seen:
-            seen.add(u)
-            unique.append(u)
-    return unique
+# URL parsing lives in reference_cache so prefetch_sources.py and the extraction
+# stage read the plan the same way this does; a second copy would drift.
+_collect_source_urls = rc.collect_source_urls
 
 
 def _preflight_distinct_sources(ready_rows: list[dict[str, str]], required_count: int) -> list[dict[str, str | int]]:
@@ -296,6 +312,117 @@ def _capture_profile_for_technique(technique: str, args: argparse.Namespace) -> 
         profile["capture_seed_max_score"] = float(args.capture_seed_max_score)
 
     return profile
+
+
+def _run_stage(name: str, cmd: list[str], project_root: Path, env: dict) -> bool:
+    print(f"\n=== {name} ===")
+    print("  " + " ".join(str(c) for c in cmd))
+    result = subprocess.run(cmd, cwd=project_root, env=env)
+    if result.returncode != 0:
+        print(f"{name} exited {result.returncode}")
+        return False
+    return True
+
+
+def _run_staged_pipeline(
+    args: argparse.Namespace,
+    ready_rows: list[dict[str, str]],
+    project_root: Path,
+    child_env: dict,
+) -> int:
+    """prefetch -> extract once per video -> select windows from the cache.
+
+    Replaces one subprocess per saved example (208 for the ready plan, each
+    paying model load and CUDA setup before decoding a frame) with one
+    extraction pass per distinct video and a pure-numpy selection pass. Videos
+    shared across rows are decoded once rather than once per row.
+
+    Run as subprocesses rather than imports so the GPU stage's memory is
+    released before selection starts, and so either stage can be re-run on its
+    own — re-tuning a gate only needs the third one.
+    """
+    if args.video_cache:
+        rc_result = _prefetch_plan_sources(ready_rows)
+        if rc_result != 0:
+            return rc_result
+
+    extract_cmd = [
+        sys.executable,
+        str(Path("scripts") / "extract_tracks.py"),
+        "--from-plan",
+        # Both child stages read the plan themselves, so --plan-csv has to reach
+        # them. Without this a non-default plan would be preflighted here and then
+        # silently ignored, and the default plan collected instead.
+        "--plan", args.plan_csv,
+        "--weights", "yolo26n-pose.pt",
+        "--max-frames", "1800",
+    ]
+    if args.fp16:
+        extract_cmd.append("--fp16")
+    if not args.video_cache:
+        extract_cmd.append("--no-video-cache")
+    if not _run_stage("extract pose detections (once per video)", extract_cmd, project_root, child_env):
+        return 1
+
+    select_cmd = [
+        sys.executable,
+        str(Path("scripts") / "select_reference_windows.py"),
+        "--plan", args.plan_csv,
+        "--examples-per-angle", str(args.examples_per_angle),
+        "--max-windows-per-video", str(args.max_windows_per_video),
+        "--score-topk", str(args.score_topk),
+    ]
+    if args.overwrite:
+        select_cmd.append("--overwrite")
+    if args.capture_seed_reference_dir:
+        select_cmd.extend(["--capture-seed-reference-dir", args.capture_seed_reference_dir])
+    if args.num_video_sequence_samples != 20:
+        select_cmd.extend(["--num-video-sequence-samples", str(args.num_video_sequence_samples)])
+    if abs(float(args.ref_min_return_closure) - 0.20) > 1e-9:
+        select_cmd.extend(["--ref-min-return-closure", str(args.ref_min_return_closure)])
+    if not _run_stage("select reference windows from cache", select_cmd, project_root, child_env):
+        return 1
+
+    print(
+        "\nDone. To re-tune a capture gate, re-run only the last stage — it needs no "
+        "GPU, video or network:\n"
+        "  python scripts/select_reference_windows.py --ref-min-return-closure 0.30 --overwrite"
+    )
+    return 0
+
+
+def _prefetch_plan_sources(ready_rows: list[dict[str, str]]) -> int:
+    """Download every distinct source the ready rows name, then stop.
+
+    Separated from capture so the slow, failure-prone part of a batch can be
+    done once up front and retried on its own, instead of dying halfway
+    through an overnight capture run.
+    """
+    by_id: dict[str, str] = {}
+    for row in ready_rows:
+        for url in _collect_source_urls(row):
+            by_id.setdefault(rc.video_id_for_source(url), url)
+    missing = [(vid, url) for vid, url in by_id.items() if rc.find_cached_video(vid) is None]
+    print(f"prefetch: {len(by_id)} distinct source(s), {len(missing)} to download")
+    failed = 0
+    for i, (vid, url) in enumerate(missing, start=1):
+        print(f"  [{i}/{len(missing)}] {vid} {url}")
+        if rc.ensure_local_video(url) is None:
+            failed += 1
+    print("prefetch summary:", {"distinct": len(by_id), "downloaded": len(missing) - failed, "failed": failed})
+    return 0
+
+
+def _resolve_source(url: str, use_cache: bool) -> str:
+    """Prefer a locally cached copy of ``url``; fall back to the URL itself.
+
+    Falling back rather than failing is deliberate: a missing or broken
+    yt-dlp should make capture slower, not impossible.
+    """
+    if not use_cache or not rc.is_url(url):
+        return url
+    local = rc.ensure_local_video(url, quiet=True)
+    return str(local) if local is not None else url
 
 
 def main() -> int:
@@ -377,9 +504,20 @@ def main() -> int:
     if args.preflight_only:
         return 0 if not preflight_issues else 2
 
+    if args.prefetch_only:
+        return _prefetch_plan_sources(ready_rows)
+
     if preflight_issues and not args.allow_source_reuse:
         print("aborting batch due to preflight failures. Add more URLs or use --allow-source-reuse")
         return 2
+
+    if not args.legacy:
+        return _run_staged_pipeline(args, ready_rows, project_root, child_env)
+
+    print(
+        "--legacy: one capture subprocess per saved example, re-decoding a video for each. "
+        "The default staged pipeline decodes each video once."
+    )
 
     def _process_row(i: int, row: dict[str, str]) -> dict[str, object]:
         """Run one plan row (technique/angle) to completion: skip/overwrite checks,
@@ -438,13 +576,14 @@ def main() -> int:
             print(f"  - example {ex_idx:02d}: {indexed_key} (starting source {source_idx + 1}/{len(source_urls)})")
             example_saved = False
             for attempt_idx, source_url in enumerate(rotated_sources, start=1):
+                local_source = _resolve_source(source_url, args.video_cache)
                 cmd = [
                     sys.executable,
                     "action_recognition.py",
                     "--weights",
                     "yolo26n-pose.pt",
                     "--source",
-                    source_url,
+                    local_source,
                     "--record-reference",
                     indexed_key,
                     "--reference-capture-mode",
@@ -459,14 +598,33 @@ def main() -> int:
                     str(profile["num_video_sequence_samples"]),
                     "--skip-frame",
                     "1",
+                    # NOT "keypoints": that directory is committed and is the pinned
+                    # fixture for test_scoring_equivalence.py and benchmark_scoring.py.
+                    # Capture runs used to overwrite it on every one of the ~208 jobs
+                    # (and, under --jobs, two at once), silently invalidating the only
+                    # guard the scoring core has. Per-key subdirectory under gitignored
+                    # data/ so concurrent jobs cannot collide either.
                     "--save-kpts-dir",
-                    "keypoints",
+                    str(Path("data") / "capture_keypoints" / indexed_key),
                     "--record-reference-max-saves",
                     "1",
                     "--reference-capture-cooldown-frames",
                     "24",
                     "--disable-video-classifier",
                     "--no-display",
+                    # Everything below this line only removes work whose result is
+                    # discarded during capture: the default --output-path writes a full
+                    # annotated mp4 nobody reads (and concurrent --jobs workers raced on
+                    # the same file), --no-display gates only cv2.imshow so boxes/overlay
+                    # were still drawn every frame, and --capture-only skips the live
+                    # trainer score that is computed and thrown away. Capture itself is
+                    # untouched: --capture-only is not --disable-trainer, which would
+                    # disable capture too.
+                    "--output-path",
+                    "",
+                    "--no-boxes",
+                    "--no-overlay-pose",
+                    "--capture-only",
                     "--auto-exit-after-reference",
                     "--reference-search-max-frames",
                     "1800",
@@ -490,6 +648,8 @@ def main() -> int:
                     "--ref-stance-hold-frames",
                     str(int(profile['ref_stance_hold_frames'])),
                 ]
+                if args.fp16:
+                    cmd.append("--fp16")
                 if capture_seed_reference_dir:
                     cmd.extend(
                         [
@@ -503,6 +663,8 @@ def main() -> int:
                     )
 
                 print(f"    attempt {attempt_idx}/{len(rotated_sources)} source={source_url}")
+                if local_source != source_url:
+                    print(f"      using cached copy: {local_source}")
                 try:
                     result = subprocess.run(cmd, cwd=project_root, timeout=1200, env=child_env)
                 except subprocess.TimeoutExpired:

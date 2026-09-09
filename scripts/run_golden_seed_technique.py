@@ -247,8 +247,22 @@ def main() -> int:
             "1",
             "--reference-capture-cooldown-frames",
             "24",
+            # Without this the CLI default (--save-kpts-dir "keypoints") applies, and the
+            # committed fixture directory used by test_scoring_equivalence.py and
+            # benchmark_scoring.py gets overwritten by every capture run.
+            "--save-kpts-dir",
+            str(Path("data") / "capture_keypoints" / record_reference),
             "--disable-video-classifier",
             "--no-display",
+            # Only removes work that is discarded during capture: the default
+            # --output-path encodes a full annotated mp4, --no-display gates only
+            # cv2.imshow (boxes/overlay were still drawn every frame), and
+            # --capture-only skips the live trainer score. Capture is unaffected.
+            "--output-path",
+            "",
+            "--no-boxes",
+            "--no-overlay-pose",
+            "--capture-only",
             "--auto-exit-after-reference",
             "--reference-search-max-frames",
             str(args.reference_search_max_frames if args.strict_capture else 0),
