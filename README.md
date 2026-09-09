@@ -12,12 +12,13 @@ Bachelor's project. The written report lives in [`report/`](report/).
 | Path | Contents |
 |---|---|
 | `action_recognition.py` | Live trainer, reference capture, and evaluation runtime — the main entry point |
-| `reference_poses/` | Reference pose library (`<technique>/<angle>.npy`), capture plans, scout output |
+| `reference_poses/` | Reference pose library (`<technique>/<angle>.npy`), technique catalogue, capture plans, scout output |
 | `keypoints/` | Committed pose windows used as fixtures by the benchmark and equivalence test |
 | `scripts/` | Data-collection, scouting, batch-run, and analysis tooling |
 | `docs/` | Handover guide, runnable command reference, scout architecture notes |
 | `report/` | LaTeX thesis source |
 | `benchmark_scoring.py` | Video-free microbenchmark for the per-frame scoring core |
+| `technique_catalog.py` | Loader for the karate technique catalogue shared by the runtime and the scripts |
 | `test_scoring_equivalence.py` | Guards the optimized scoring core against a pinned copy of the original |
 
 ## Setup
@@ -57,6 +58,15 @@ regardless of where the repo is checked out.
 See [`docs/ReadyToRunCommands.md`](docs/ReadyToRunCommands.md) for the full
 command cookbook and [`docs/HOWTO.md`](docs/HOWTO.md) for the architecture and
 handover guide.
+
+## Karate techniques
+
+Alongside the kickboxing vocabulary, `reference_poses/karate_techniques.csv`
+catalogues 54 karate techniques — romaji, Japanese, English, and the family
+(stance / punch / strike / block / kick) that tells the scorer which joints
+matter. See [`docs/KARATE_TECHNIQUES.md`](docs/KARATE_TECHNIQUES.md) for the
+full table, the sources it was built from, and how to capture reference poses
+for it.
 
 ## Performance tooling
 

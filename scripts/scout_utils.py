@@ -11,11 +11,18 @@ from __future__ import annotations
 
 import csv
 import re
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from technique_catalog import search_term as catalog_search_term
 
 
 def normalize_technique_key(text: str) -> str:
@@ -128,6 +135,9 @@ TECHNIQUE_SEARCH_TEMPLATES = {
         "martial arts side kick {angle}",
         "proper side kick form {angle}",
     ],
+    # Karate techniques are not listed here one by one: their queries are built from
+    # the ``search_term`` column of reference_poses/karate_techniques.csv (see
+    # ``generate_search_queries``), so adding a technique to the catalogue is enough.
     # Stance/positioning
     "fighting stance": [
         "boxing fighting stance tutorial {angle}",
@@ -154,6 +164,18 @@ def generate_search_queries(technique: str, angle: str, num_queries: int = 5) ->
     angle_desc = angle_to_camera_description(angle)
     
     templates = TECHNIQUE_SEARCH_TEMPLATES.get(technique_lower, [])
+    if not templates:
+        # Catalogued karate techniques carry their own search phrase, so "mae_geri"
+        # searches for "karate mae geri front kick" rather than the bare key.
+        base = catalog_search_term(technique)
+        if base:
+            templates = [
+                f"{base} tutorial {{angle}}",
+                f"how to do {base} {{angle}}",
+                f"{base} technique {{angle}}",
+                f"{base} kihon demonstration {{angle}}",
+                f"{base} slow motion {{angle}}",
+            ]
     if not templates:
         # Fallback: generic queries
         templates = [
