@@ -163,6 +163,33 @@ def parse_args() -> argparse.Namespace:
         help="allow reusing source URLs when fewer distinct URLs are available than needed examples",
     )
     parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help=(
+            "use the original flow: one action_recognition.py subprocess per saved example, "
+            "re-decoding and re-inferring a video for each one. Kept for comparison — the "
+            "staged pipeline should produce the same references far more cheaply"
+        ),
+    )
+    parser.add_argument(
+        "--max-windows-per-video",
+        type=int,
+        default=1,
+        help=(
+            "staged pipeline: windows one video may contribute to a row before other sources "
+            "are tried (default: 1, keeping one example per video as before; 0 = unlimited)"
+        ),
+    )
+    parser.add_argument(
+        "--score-topk",
+        type=int,
+        default=0,
+        help=(
+            "staged pipeline: cosine-prescreen the reference bank and only DTW the top K when "
+            "ranking candidates (default: 0 = exact, matching the legacy path)"
+        ),
+    )
+    parser.add_argument(
         "--no-video-cache",
         dest="video_cache",
         action="store_false",
@@ -259,6 +286,78 @@ def _capture_profile_for_technique(technique: str, args: argparse.Namespace) -> 
         profile["capture_seed_max_score"] = float(args.capture_seed_max_score)
 
     return profile
+
+
+def _run_stage(name: str, cmd: list[str], project_root: Path, env: dict) -> bool:
+    print(f"\n=== {name} ===")
+    print("  " + " ".join(str(c) for c in cmd))
+    result = subprocess.run(cmd, cwd=project_root, env=env)
+    if result.returncode != 0:
+        print(f"{name} exited {result.returncode}")
+        return False
+    return True
+
+
+def _run_staged_pipeline(
+    args: argparse.Namespace,
+    ready_rows: list[dict[str, str]],
+    project_root: Path,
+    child_env: dict,
+) -> int:
+    """prefetch -> extract once per video -> select windows from the cache.
+
+    Replaces one subprocess per saved example (208 for the ready plan, each
+    paying model load and CUDA setup before decoding a frame) with one
+    extraction pass per distinct video and a pure-numpy selection pass. Videos
+    shared across rows are decoded once rather than once per row.
+
+    Run as subprocesses rather than imports so the GPU stage's memory is
+    released before selection starts, and so either stage can be re-run on its
+    own — re-tuning a gate only needs the third one.
+    """
+    if args.video_cache:
+        rc_result = _prefetch_plan_sources(ready_rows)
+        if rc_result != 0:
+            return rc_result
+
+    extract_cmd = [
+        sys.executable,
+        str(Path("scripts") / "extract_tracks.py"),
+        "--from-plan",
+        "--weights", "yolo26n-pose.pt",
+        "--max-frames", "1800",
+    ]
+    if args.fp16:
+        extract_cmd.append("--fp16")
+    if not args.video_cache:
+        extract_cmd.append("--no-video-cache")
+    if not _run_stage("extract pose detections (once per video)", extract_cmd, project_root, child_env):
+        return 1
+
+    select_cmd = [
+        sys.executable,
+        str(Path("scripts") / "select_reference_windows.py"),
+        "--examples-per-angle", str(args.examples_per_angle),
+        "--max-windows-per-video", str(args.max_windows_per_video),
+        "--score-topk", str(args.score_topk),
+    ]
+    if args.overwrite:
+        select_cmd.append("--overwrite")
+    if args.capture_seed_reference_dir:
+        select_cmd.extend(["--capture-seed-reference-dir", args.capture_seed_reference_dir])
+    if args.num_video_sequence_samples != 20:
+        select_cmd.extend(["--num-video-sequence-samples", str(args.num_video_sequence_samples)])
+    if abs(float(args.ref_min_return_closure) - 0.20) > 1e-9:
+        select_cmd.extend(["--ref-min-return-closure", str(args.ref_min_return_closure)])
+    if not _run_stage("select reference windows from cache", select_cmd, project_root, child_env):
+        return 1
+
+    print(
+        "\nDone. To re-tune a capture gate, re-run only the last stage — it needs no "
+        "GPU, video or network:\n"
+        "  python scripts/select_reference_windows.py --ref-min-return-closure 0.30 --overwrite"
+    )
+    return 0
 
 
 def _prefetch_plan_sources(ready_rows: list[dict[str, str]]) -> int:
@@ -380,6 +479,14 @@ def main() -> int:
     if preflight_issues and not args.allow_source_reuse:
         print("aborting batch due to preflight failures. Add more URLs or use --allow-source-reuse")
         return 2
+
+    if not args.legacy:
+        return _run_staged_pipeline(args, ready_rows, project_root, child_env)
+
+    print(
+        "--legacy: one capture subprocess per saved example, re-decoding a video for each. "
+        "The default staged pipeline decodes each video once."
+    )
 
     def _process_row(i: int, row: dict[str, str]) -> dict[str, object]:
         """Run one plan row (technique/angle) to completion: skip/overwrite checks,

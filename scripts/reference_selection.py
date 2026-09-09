@@ -70,6 +70,11 @@ class SelectionConfig:
     capture_seed_max_score: float = 100.0
 
     search_max_frames: int = 1800
+    # Cosine-prescreen the reference bank and only DTW the top K, as the trainer's
+    # --score-topk does. 0 scores the whole bank and matches the live path exactly;
+    # raising it trades a little exactness for a lot of wall clock, because the DTW
+    # sweep of the bank is essentially the entire cost of this stage.
+    score_topk: int = 0
     segment_start_frame: int = 0
     segment_end_frame: int = 0  # 0 = to the end of what was extracted
 
@@ -309,9 +314,26 @@ def score_candidate(
     ``gate_score``, which becomes the ranking base whenever the technique
     already has references. Returns False when the candidate is rejected.
     """
-    passes_gate, gate_score = ar._passes_reference_score_gate(
-        candidate.pose_seq, references, technique_key, config.ref_min_score_gate
-    )
+    if config.score_topk > 0:
+        # Same decision as _passes_reference_score_gate, but with the prescreen
+        # applied. Kept as a separate branch so score_topk=0 goes through the
+        # untouched shared helper and stays bit-identical to the live path.
+        tkey_gate = ar._normalize_key(technique_key)
+        if tkey_gate not in references or not references[tkey_gate]:
+            passes_gate, gate_score = True, 0.0
+        else:
+            best_gate = ar._best_reference_match(
+                candidate.pose_seq, references[tkey_gate], tkey_gate, topk=config.score_topk
+            )
+            if best_gate is None:
+                passes_gate, gate_score = False, 0.0
+            else:
+                gate_score = float(best_gate[1]["score"])
+                passes_gate = gate_score >= config.ref_min_score_gate
+    else:
+        passes_gate, gate_score = ar._passes_reference_score_gate(
+            candidate.pose_seq, references, technique_key, config.ref_min_score_gate
+        )
     passes_seed, seed_score, has_seed_refs = ar._passes_reference_similarity_band(
         candidate.pose_seq,
         seed_references,
@@ -359,7 +381,7 @@ def select_top_k(
     config: SelectionConfig,
     min_gap_frames: int = 24,
     max_self_similarity: float = 95.0,
-    rescore_after_each: bool = True,
+    rescore_after_each: bool = False,
 ) -> list[Candidate]:
     """Greedily take the best ``k`` windows that are not the same moment twice.
 
@@ -373,11 +395,17 @@ def select_top_k(
        one already taken. Overlap alone does not catch a repeated jab thrown
        identically eight frames later, which is exactly what a tutorial video is
        full of. Set to 0 to disable.
-    3. With ``rescore_after_each``, an accepted window joins the in-memory bank
-       and the remaining candidates are re-ranked against it. This is what the
-       old flow did implicitly: each example ran in its own subprocess and
-       reloaded the library from disk, so example 02 was already ranked against
-       example 01.
+    3. ``rescore_after_each`` adds each accepted window to the in-memory bank and
+       re-ranks the rest against it, reproducing what the old flow did
+       implicitly — each example ran in its own subprocess and reloaded the
+       library from disk, so example 02 was already ranked against example 01.
+       It defaults to **off**: it costs a full DTW sweep of the remaining
+       candidates per acceptance, and because ``_best_reference_match`` takes
+       the maximum over the bank, adding a window *raises* the score of
+       candidates resembling it — it nudges toward the near-duplicates rule 2
+       exists to prevent. Turn it on to reproduce the old ranking exactly. With
+       ``k=1`` it never fires, so it cannot affect equivalence with the live
+       single-window path.
     """
     if k <= 0:
         return []
@@ -429,3 +457,78 @@ def select_top_k(
             ]
 
     return accepted
+
+
+def select_across_sources(
+    pools: dict[str, list[Candidate]],
+    k: int,
+    *,
+    references: dict[str, dict[str, np.ndarray]],
+    seed_references: dict[str, dict[str, np.ndarray]],
+    technique_key: str,
+    config: SelectionConfig,
+    max_windows_per_video: int = 1,
+    min_gap_frames: int = 24,
+    max_self_similarity: float = 95.0,
+) -> list[tuple[str, Candidate]]:
+    """Fill one plan row's ``k`` examples from several videos, best-first per video.
+
+    Source diversity is the default: round 1 takes each video's best window
+    before round 2 asks any video for a second. A row with four sources still
+    gets four examples from four different performers — the saving comes from
+    each video being decoded once instead of once per example, not from taking
+    everything off one video. ``max_windows_per_video`` raises the per-video cap
+    for rows that are short on sources.
+
+    Every candidate is scored exactly once. Scoring is the expensive part (a DTW
+    sweep of the reference bank per candidate), so re-ranking a pool per round —
+    or per video, per round — turns a minute of work into many.
+
+    Returns ``(video_id, candidate)`` pairs in acceptance order.
+    """
+    if k <= 0:
+        return []
+
+    tkey = ar._normalize_key(technique_key)
+    ranked: dict[str, list[Candidate]] = {}
+    for video_id, pool in pools.items():
+        scored = [
+            c for c in pool
+            if score_candidate(c, references, seed_references, technique_key, config)
+        ]
+        scored.sort(key=lambda c: (-c.selection_score, c.end_frame))
+        ranked[video_id] = scored
+
+    picks: list[tuple[str, Candidate]] = []
+    taken_per_video: dict[str, list[Candidate]] = {vid: [] for vid in pools}
+    cap = max_windows_per_video if max_windows_per_video > 0 else k
+
+    for _round in range(cap):
+        if len(picks) >= k:
+            break
+        for video_id in pools:  # plan column order, so source 1 is preferred
+            if len(picks) >= k:
+                break
+            same_video = taken_per_video[video_id]
+            if len(same_video) > _round:
+                continue
+
+            for candidate in ranked[video_id]:
+                if any(c is candidate for _v, c in picks):
+                    continue
+                # Frame spans only mean anything within one video, so overlap and
+                # spacing are checked against that video's own picks. Near-duplicate
+                # similarity is checked against every pick, since two videos can
+                # easily show the same technique the same way.
+                if any(_windows_overlap(candidate, taken, min_gap_frames) for taken in same_video):
+                    continue
+                if max_self_similarity > 0 and picks:
+                    bank = {f"taken_{i:02d}": c.pose_seq for i, (_v, c) in enumerate(picks)}
+                    best = ar._best_reference_match(candidate.pose_seq, bank, tkey)
+                    if best is not None and float(best[1]["score"]) >= max_self_similarity:
+                        continue
+                picks.append((video_id, candidate))
+                same_video.append(candidate)
+                break
+
+    return picks

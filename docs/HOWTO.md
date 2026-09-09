@@ -95,8 +95,13 @@ Key behavior:
 
 - Preflight validates number of distinct source URLs.
 - Skips rows that already have enough examples (unless `--overwrite`).
-- Runs child capture calls to `action_recognition.py` in reference-capture mode.
-- Applies cooldown between jobs to reduce sustained load.
+- Runs three stages: prefetch sources, extract pose detections once per
+  distinct video, then select reference windows from the cache.
+
+It used to launch one `action_recognition.py` subprocess per saved `.npy` —
+208 for the ready plan, each re-downloading and re-inferring a video to keep a
+single window, and each paying interpreter start, `import torch`, CUDA context
+and model load first. Those 208 slots name only 119 distinct videos.
 
 Useful flags:
 
@@ -107,6 +112,11 @@ Useful flags:
 - `--ref-min-return-closure`
 - `--cpu-threads`
 - `--preflight-only`
+- `--prefetch-only` — download every source, then stop
+- `--max-windows-per-video` (default 1) — how many windows one video may
+  contribute to a row before other sources are tried
+- `--score-topk` (default 0 = exact) — prescreen the reference bank when ranking
+- `--legacy` — the original subprocess-per-example flow
 
 ## 4.2 `action_recognition.py`
 
@@ -155,7 +165,66 @@ Use this when you already have local curated clips under `reference_poses/Golden
 2. Launch batch runner.
 3. Batch captures references and writes `.npy` files by technique/angle.
 4. Review with preview script.
-5. Recapture weak references with stricter gates.
+5. Recapture weak references with stricter gates — see 5.3, this no longer
+   means re-downloading anything.
+
+## 5.3 The two caches, and why gate re-tuning is now cheap
+
+```
+cache/videos/<video_id>.<ext>          prefetched source video
+cache/tracks/<video_id>__<sig>.npz     every pose detection the model made
+```
+
+Both are gitignored and rebuild from the plan, so `cache/` can be deleted at any
+time. The videos dominate the disk cost (tens of GB for a full plan); the
+detection tables are small.
+
+`<sig>` covers everything that changes the *detections* — weights, image size,
+precision, tracker, ultralytics version, device — and deliberately nothing that
+only changes *which window is selected*. That asymmetry is the point: the
+`ref_*` gates, `num_video_sequence_samples` and `reference_sequence_mode` are
+not in the key, so changing one replays the cached tracks instead of re-running
+the model.
+
+```bash
+python scripts/select_reference_windows.py --ref-min-return-closure 0.30 --overwrite
+```
+
+No GPU, no video decode, no network. To be concrete rather than vague about it:
+re-selecting the four jab rows (13 distinct videos) takes about **170 s** of CPU
+with exact ranking, or **68 s** with `--score-topk 3`. Nearly all of that is the
+DTW sweep of the reference bank — 21 references for jab — while ranking
+candidates. So it is minutes for a technique rather than seconds, but it is
+minutes without touching the network or the GPU, against hours of re-downloading
+and re-inference before. That is what makes 9.1 iterable.
+
+Two consequences worth knowing:
+
+- One video pass can now yield several windows. By default each of a row's
+  distinct sources still contributes one example, preserving source diversity;
+  `--max-windows-per-video` raises the cap for rows short on sources. A
+  similarity ceiling (`--max-self-similarity`, default 95) rejects a window too
+  much like one already accepted, so several windows from one video are not the
+  same action repeated.
+- `test_capture_equivalence.py` pins the replay against a copy of the live
+  capture loop. Run it after touching `reference_selection.py`, the window
+  extractors, or the gates.
+
+## 5.4 Screening candidates before capture
+
+`scripts/rank_candidates_by_pose.py` scores a candidate video's best available
+window against a technique's reference bank with `_best_reference_match` — the
+matcher the trainer itself uses, so it accounts for mirroring and joint angles.
+This finally wires up the pose-based filtering 9.2 wanted, though not for free:
+a candidate must be downloaded and run through the pose model to be scored. It
+pays off when that is cheaper than a capture run plus reviewing the weak
+references that follow, and the extraction is cached, so a candidate that
+survives screening is not re-extracted when it is captured.
+
+Note it does *not* use `scout_utils.compute_pose_match_score`, which was written
+for this and left unused: its sequence-length term rewards windows that merely
+happen to be the same length — meaningless for variable-length `stance_cycle`
+output — and it ignores mirroring and joint angles.
 
 ## 5.2 Candidate acceptance gates
 
@@ -313,7 +382,7 @@ Supervisor support requested:
 - Define evaluation protocol (validation set, metrics, acceptance targets).
 - Support per-technique threshold calibration and periodic re-baselining.
 
-## 9.4 Runtime stability of online video sources
+## 9.4 Runtime stability of online video sources — addressed
 
 Observed issue:
 
@@ -327,6 +396,24 @@ Supervisor support requested:
 
 - Endorse policy to pre-download videos for batch runs.
 - Optionally support local dataset mirroring to avoid stream-side failures.
+
+Update: sources are now downloaded once into `cache/videos/` before capture
+starts (`scripts/prefetch_sources.py`, or
+`run_reference_collection_batch.py --prefetch-only`), rather than streamed
+straight into `cv2.VideoCapture` on every use. Downloading is retryable on its
+own instead of failing in the middle of a capture run, and the 60 plan URLs used
+by more than one row are fetched once rather than per row. A missing or broken
+`yt-dlp` falls back to streaming, so the cache makes capture more reliable
+without becoming a hard dependency.
+
+One caveat for the supervisor to sign off on, since 9.4 asks for the policy
+rather than the mechanism: cached videos are local, gitignored research
+artifacts kept to make capture runs reproducible and to avoid repeated
+streaming. Downloading YouTube content may be restricted by its Terms of
+Service. Confirm this is acceptable under institutional policy before enabling
+the cache, prefer material the project has rights to (the local Golden Seeds
+clips) where possible, and do not redistribute cached media. Only the derived
+keypoint arrays under `reference_poses/` are committed.
 
 ## 9.5 Compute throughput
 
