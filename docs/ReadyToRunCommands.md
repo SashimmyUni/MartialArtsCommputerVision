@@ -106,6 +106,12 @@ Dry run only:
 python scripts/run_reference_collection_batch.py --preflight-only
 ```
 
+Run a different plan (see section 13 for the karate one):
+
+```powershell
+python scripts/run_reference_collection_batch.py --plan-csv reference_poses/karate_capture_plan.csv
+```
+
 Download everything first (retryable on its own, so a dropped connection does
 not kill a capture run):
 
@@ -162,8 +168,7 @@ they resemble your own recordings rather than the current bank.
 ## 9c) Original one-subprocess-per-example flow
 
 ```powershell
-python scripts/run_reference_collection_batch.py --legacy
-```
+python scripts/run_reference_collection_batch.py --legacy```
 
 ## 10) Run all Golden Seeds files for one technique (auto-indexed)
 
@@ -297,7 +302,52 @@ python scripts/run_reference_collection_batch.py
 
 New references saved to: `reference_poses/jab/front_01.npy`, `jab/front_02.npy`, etc.
 
-## 13) Useful output locations
+## 13) Karate technique capture
+
+The karate vocabulary lives in `reference_poses/karate_techniques.csv`. See
+`KARATE_TECHNIQUES.md` for the full table and the review step.
+
+Inventory the catalogue:
+
+```powershell
+python technique_catalog.py
+```
+
+Regenerate the capture plan (add `--tier all` for the extended techniques):
+
+```powershell
+python scripts/generate_karate_capture_plan.py
+```
+
+Fold reviewed source clips into the plan:
+
+```powershell
+python scripts/generate_karate_capture_plan.py --candidates-csv reference_poses/karate_video_candidates.csv
+```
+
+Preflight, then run the karate batch:
+
+```powershell
+python scripts/run_reference_collection_batch.py --plan-csv reference_poses/karate_capture_plan.csv --preflight-only
+```
+
+```powershell
+python scripts/run_reference_collection_batch.py --plan-csv reference_poses/karate_capture_plan.csv
+```
+
+Score a video against a karate technique:
+
+```powershell
+python action_recognition.py --source "InputVideo/MaeGeri_Input.mp4" --target-technique mae_geri --disable-video-classifier --no-display
+```
+
+Use the karate labels for zero-shot classification instead of the kickboxing set:
+
+```powershell
+python action_recognition.py --source 0 --target-technique gyaku_zuki --label-set karate
+```
+
+## 14) Useful output locations
 
 - Main trainer output video: `output_demo.mp4`
 - Pose-only video (if enabled): `datasets/pose_video.mp4`

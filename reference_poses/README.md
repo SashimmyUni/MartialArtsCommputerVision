@@ -29,6 +29,18 @@ Technique folder names should use snake_case:
 
 - `fighting_stance`, `jab`, `cross`, `hook`, `uppercut`, `front_kick`, `roundhouse_kick`, `side_kick`, `back_kick`, `spinning_back_kick`, `knee_strike`, `elbow_strike`, `axe_kick`
 
+## Karate technique data
+
+| File | Contents |
+|---|---|
+| `karate_techniques.csv` | Catalogue of 54 karate techniques: romaji, Japanese, English, family, capture profile |
+| `karate_capture_plan.csv` | Capture plan generated from the catalogue, one row per (technique, angle) |
+| `karate_video_candidates.csv` | Searched candidate source clips per technique, awaiting review |
+
+Karate techniques are stored under their romaji key in the same layout as
+everything else — `reference_poses/mae_geri/front.npy`. See
+`docs/KARATE_TECHNIQUES.md` for the workflow that fills them.
+
 ## Notes
 
 - The active loader supports this nested multi-angle layout directly.

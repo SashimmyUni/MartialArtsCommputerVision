@@ -18,6 +18,11 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import reference_cache as rc  # noqa: E402  (needs SCRIPT_DIR on sys.path)
 
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from technique_catalog import capture_profile_name
+
 
 def _resolve_project_path(path_value: str) -> Path:
     p = Path(path_value)
@@ -80,6 +85,14 @@ TECHNIQUE_CAPTURE_PROFILES = {
     "spinning_back_kick": KICK_PROFILE,
     "knee_strike": KICK_PROFILE,
     "axe_kick": KICK_PROFILE,
+}
+
+#: Karate techniques are not listed above one by one — the ``capture_profile`` column of
+#: reference_poses/karate_techniques.csv names one of these for each catalogued technique.
+CAPTURE_PROFILES_BY_NAME = {
+    "stance": STANCE_PROFILE,
+    "punch": PUNCH_PROFILE,
+    "kick": KICK_PROFILE,
 }
 
 
@@ -218,6 +231,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="run CSV source-diversity validation and exit without starting capture",
     )
+    parser.add_argument(
+        "--plan-csv",
+        type=str,
+        default="reference_poses/generated_capture_plan_all_labels.csv",
+        help=(
+            "capture plan to run (default: the all-labels kickboxing plan). Pass "
+            "reference_poses/karate_capture_plan.csv to collect the karate catalogue instead"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -261,6 +283,10 @@ def _normalize_key(text: str) -> str:
 
 def _capture_profile_for_technique(technique: str, args: argparse.Namespace) -> dict[str, float | int | str]:
     profile = dict(TECHNIQUE_CAPTURE_PROFILES.get(_normalize_key(technique), {}))
+    if not profile:
+        catalogued = capture_profile_name(technique)
+        if catalogued:
+            profile = dict(CAPTURE_PROFILES_BY_NAME.get(catalogued, {}))
     if not profile:
         profile = {
             "reference_sequence_mode": "fixed",
@@ -324,6 +350,10 @@ def _run_staged_pipeline(
         sys.executable,
         str(Path("scripts") / "extract_tracks.py"),
         "--from-plan",
+        # Both child stages read the plan themselves, so --plan-csv has to reach
+        # them. Without this a non-default plan would be preflighted here and then
+        # silently ignored, and the default plan collected instead.
+        "--plan", args.plan_csv,
         "--weights", "yolo26n-pose.pt",
         "--max-frames", "1800",
     ]
@@ -337,6 +367,7 @@ def _run_staged_pipeline(
     select_cmd = [
         sys.executable,
         str(Path("scripts") / "select_reference_windows.py"),
+        "--plan", args.plan_csv,
         "--examples-per-angle", str(args.examples_per_angle),
         "--max-windows-per-video", str(args.max_windows_per_video),
         "--score-topk", str(args.score_topk),
@@ -416,7 +447,7 @@ def main() -> int:
         return 2
 
     project_root = PROJECT_ROOT
-    plan_path = project_root / "reference_poses" / "generated_capture_plan_all_labels.csv"
+    plan_path = _resolve_project_path(args.plan_csv)
     if not plan_path.exists():
         print(f"plan file not found: {plan_path}")
         return 2

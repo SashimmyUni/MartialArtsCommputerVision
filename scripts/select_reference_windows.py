@@ -128,26 +128,28 @@ def _existing_angle_examples(technique_dir: Path, angle: str) -> list[Path]:
 def _profile_for(technique: str, args: argparse.Namespace) -> rs.SelectionConfig:
     """Per-technique capture profile, with any explicit CLI overrides applied.
 
-    The profiles stay owned by run_reference_collection_batch so there is one
-    definition of what a jab capture expects.
+    Delegates to run_reference_collection_batch's own lookup rather than keeping
+    a second copy. That lookup also resolves karate techniques through the
+    catalogue's ``capture_profile`` column, so a private copy here would quietly
+    fall back to the generic profile for every technique in
+    reference_poses/karate_techniques.csv.
     """
-    from run_reference_collection_batch import TECHNIQUE_CAPTURE_PROFILES
+    from run_reference_collection_batch import _capture_profile_for_technique
 
-    profile = dict(TECHNIQUE_CAPTURE_PROFILES.get(ar._normalize_key(technique), {}))
-    if not profile:
-        profile = {
-            "reference_sequence_mode": "fixed",
-            "num_video_sequence_samples": 20,
-            "ref_min_motion_energy": 0.02,
-            "ref_min_return_closure": 0.20,
-            "capture_seed_min_score": 0.0,
-            "capture_seed_max_score": 100.0,
-            "ref_stance_start_threshold": 0.18,
-            "ref_stance_end_threshold": 0.12,
-            "ref_stance_peak_threshold": 0.30,
-            "ref_stance_min_frames": 24,
-            "ref_stance_hold_frames": 4,
-        }
+    # The shared lookup reads these four off its own args namespace; supply the
+    # batch runner's defaults for the ones this CLI does not expose, so an
+    # unspecified value means "leave the profile alone" here too.
+    profile_args = argparse.Namespace(
+        num_video_sequence_samples=(
+            args.num_video_sequence_samples if args.num_video_sequence_samples is not None else 20
+        ),
+        ref_min_return_closure=(
+            args.ref_min_return_closure if args.ref_min_return_closure is not None else 0.20
+        ),
+        capture_seed_min_score=0.0,
+        capture_seed_max_score=100.0,
+    )
+    profile = _capture_profile_for_technique(technique, profile_args)
     return rs.SelectionConfig.from_profile(
         profile,
         num_video_sequence_samples=args.num_video_sequence_samples,
