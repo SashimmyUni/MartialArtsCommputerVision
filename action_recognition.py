@@ -23,7 +23,7 @@ from ultralytics.utils.plotting import Annotator
 from ultralytics.utils.tqdm import TQDM
 from ultralytics.utils.torch_utils import select_device
 
-from technique_catalog import classifier_labels, focus_joints_group, technique_family
+from technique_catalog import KARATE_CATALOG_PATH, MMA_CATALOG_PATH, classifier_labels, focus_joints_group, technique_family
 
 
 MARTIAL_ARTS_LABELS = [
@@ -45,12 +45,19 @@ MARTIAL_ARTS_LABELS = [
 #: Zero-shot labels for the karate catalogue in ``reference_poses/karate_techniques.csv``.
 #: Karate labels are prefixed with "karate" in the catalogue so they stay distinct from
 #: their kickboxing namesakes above when both label sets are used together.
-KARATE_LABELS = classifier_labels("core")
+KARATE_LABELS = classifier_labels("core", path=KARATE_CATALOG_PATH)
+
+#: Zero-shot labels for the MMA catalogue in ``reference_poses/mma_techniques.csv``
+#: (standing striking only — see fight_analysis.py). Each label normalizes to that
+#: catalogue's technique_key, so a classifier prediction maps directly onto a
+#: reference_poses/<technique>/ bank without a separate lookup table.
+MMA_LABELS = classifier_labels("core", path=MMA_CATALOG_PATH)
 
 LABEL_SETS = {
     "martial_arts": MARTIAL_ARTS_LABELS,
     "karate": KARATE_LABELS,
-    "all": MARTIAL_ARTS_LABELS + KARATE_LABELS,
+    "mma": MMA_LABELS,
+    "all": MARTIAL_ARTS_LABELS + KARATE_LABELS + MMA_LABELS,
 }
 
 PROJECT_ROOT = Path(__file__).resolve().parent

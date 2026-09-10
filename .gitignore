@@ -23,3 +23,6 @@ timing.json
 # and re-creatable from the plan CSV; only the extracted reference_poses/*.npy
 # are committed.
 cache/
+
+# Local scouting catalog
+reference_poses/candidate_catalog.sqlite

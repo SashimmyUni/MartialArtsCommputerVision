@@ -1,0 +1,19 @@
+technique_key,romaji,japanese,kana,english,family,capture_profile,focus_joints,level,tier,classifier_label,search_term,aliases,sources,notes
+fighting_stance,,,,fighting stance,stance,stance,full,,core,fighting stance,mma fighting stance orthodox southpaw guard,,,bladed guard stance used to start and end MMA striking exchanges
+jab,,,,jab,punch,punch,upper,,core,jab,mma boxing jab tutorial,,,lead-hand straight punch used to gauge range and set up combinations
+cross,,,,cross,punch,punch,upper,,core,cross,mma boxing cross tutorial,,,rear-hand straight punch driven by hip and shoulder rotation
+hook,,,,hook,punch,punch,upper,,core,hook,mma boxing hook tutorial,,,short arcing punch thrown with a bent elbow
+uppercut,,,,uppercut,punch,punch,upper,,core,uppercut,mma boxing uppercut tutorial,,,rising punch thrown at close range
+overhand,,,,overhand,punch,punch,upper,,core,overhand,mma overhand right tutorial,,,looping rear-hand punch that arcs over the opponent's guard
+superman_punch,,,,superman punch,punch,punch,full,,core,superman punch,mma superman punch tutorial,,,forward hop drives a jumping rear-hand straight punch
+spinning_backfist,,,,spinning backfist,strike,punch,full,,core,spinning backfist,mma spinning backfist tutorial,,,full turn away from the opponent then a back-fist strike on the way around
+elbow_strike,,,,elbow strike,strike,punch,upper,,core,elbow strike,mma elbow strike tutorial,,,close-range strike with the point of the elbow standing or in the clinch
+knee_strike,,,,knee strike,kick,kick,lower,,core,knee strike,mma muay thai knee strike tutorial,,,close-range strike driving the bent knee up into the target
+front_kick,,,,front kick,kick,kick,lower,,core,front kick,mma front kick tutorial,,,pushing or snapping kick thrown straight through the target
+teep,,,,teep,kick,kick,lower,,core,teep,muay thai teep push kick tutorial,push_kick,,long-range push kick used to control distance off the lead or rear leg
+roundhouse_kick,,,,roundhouse kick,kick,kick,lower,,core,roundhouse kick,mma roundhouse kick tutorial,,,kick arcs in from the side as the supporting foot pivots
+leg_kick,,,,leg kick,kick,kick,lower,,core,leg kick,muay thai low kick leg kick tutorial,low_kick,,roundhouse kick thrown low into the opponent's thigh or calf
+side_kick,,,,side kick,kick,kick,lower,,core,side kick,mma side kick tutorial,,,driven straight out from the hip and struck with the foot edge or heel
+back_kick,,,,back kick,kick,kick,lower,,core,back kick,mma back kick tutorial,,,the body turns away and the heel drives straight back
+spinning_back_kick,,,,spinning back kick,kick,kick,full,,core,spinning back kick,mma spinning back kick tutorial,,,full turn away from the opponent before the heel drives back through the target
+axe_kick,,,,axe kick,kick,kick,lower,,core,axe kick,mma axe kick tutorial,,,the leg lifts high then drops so the heel falls onto the target

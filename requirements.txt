@@ -24,10 +24,15 @@ torchvision>=0.9.0
 yt-dlp>=2024.1.1
 
 # Optional: only needed for the X-CLIP / VideoMAE action-label classifier.
-# The trainer runs fine without it via --disable-video-classifier.
-# transformers>=4.30.0
+# Required for fight_analysis.py's zero-shot X-CLIP classifier. The karate/
+# kickboxing trainer (action_recognition.py) still runs fine without it via
+# --disable-video-classifier.
+transformers>=4.30.0
+
+# Required for scripts/analyze_fight_metrics.py (--plot bar/timeline) and
+# scripts/analyze_run_metrics.py-adjacent plotting tools.
+matplotlib>=3.5.0
+pandas>=1.5.0
 
 # Optional: only needed for plot_score_distributions_grouped.py.
-# matplotlib>=3.5.0
-# pandas>=1.5.0
 # seaborn>=0.12.0
