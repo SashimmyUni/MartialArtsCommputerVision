@@ -7,6 +7,7 @@
 | `KARATE_TECHNIQUES.md` | The karate technique catalogue — naming, sources, and how to capture references for it |
 | `GOLDEN_SEEDS_SCOUT_GUIDE.md` | Walkthrough for sourcing reference clips via the YouTube scout |
 | `SCOUT_ARCHITECTURE.md` | Design notes for the scout scripts and their CSV data flow |
+| `PORTING.md` | Reimplementing the scoring core in another language (iOS/web) — exported artifacts and the traps |
 | `figures/` | Rendered metric plots kept for the report |
 
 ## Reference layout
