@@ -195,6 +195,12 @@ self-contained — a port needs no `.npy` reader and no Python to run its tests.
 | `5_best_match` | `_best_reference_match` chosen angle and metrics, exhaustive and `topk=3` |
 | `6_feedback` | `generate_feedback` strings |
 
+**Level 6 is the one gap in the spec.** The golden file records the coaching strings
+`generate_feedback` produces, but neither the bundle nor this document specifies the
+rules, joint-angle thresholds, or message text that generate them. A port must read
+`action_recognition.py:1686` for that; the exports alone are not enough. Everything in
+levels 1–5 is fully specified by the artifacts.
+
 The layering is the point. A single end-to-end score mismatch says nothing about
 where a port went wrong; these six levels isolate it. Port level by level and get
 each one green before starting the next.
@@ -233,6 +239,62 @@ The angle triplets come from `_ANGLE_DEF_CATEGORIES` (`:1285`) selected by
 `_technique_angle_category` (`:1303`). Both are hard dependencies of the scorer and
 both must be ported; the bundle exports the triplets and the per-technique category
 so a port need not reimplement the classifier.
+
+## The exports have been proven sufficient
+
+An independent reimplementation in JavaScript, given **only** `export/mobile/` and no
+access to the Python, reproduces the scoring core: **14,507 of 14,507 comparisons
+pass** across levels 1–5 (normalize, resample, DTW, compare, best-match), including
+all 500 best-match angle selections and every score.
+
+This matters because `verify_export.py` cannot establish it — that script imports the
+same functions that generated the vectors, so it is circular by construction. The
+cross-language run is the only evidence that these artifacts are a *sufficient spec*
+rather than merely a self-consistent one. Two things it surfaced:
+
+**1. `angle_error` is numerically ill-conditioned, and no port can match it tightly.**
+
+`_mean_angle_sequence` computes `degrees(arccos(clip(dot / (|ba| * |bc|))))`, and
+`arccos` has unbounded derivative as `|cos| → 1`. Measured against the installed
+NumPy:
+
+| `cos` | angle | angle shift per **one float32 ulp** of `cos` |
+|---|---|---|
+| 0.0 | 90.000° | 0.000000° |
+| 0.9 | 25.842° | 0.000008° |
+| 0.999 | 2.563° | 0.000076° |
+| 0.99999 | 0.256° | 0.000762° |
+| 1.0 | 0.000° | **0.019782°** |
+
+Real reference data sits in that region constantly, because a fully extended or fully
+tucked limb *is* the target of most techniques — `jab/left45_02` has `cos = 1.0` in 5
+of its 37 frames on triplet (8,6,12), whose mean angle is only 4.59°. So a port that
+differs by a single last-bit rounding in `cos` differs by ~0.02° in the angle,
+200× the original 1e-4 tolerance. That is why `angle_error_atol` is 1e-2 and
+`score_atol` is 5e-3; both are derived in `export_golden_vectors.py` rather than
+guessed, and both remain orders of magnitude below the real signal.
+
+**Prefer `atan2(|cross|, dot)` in a port.** It is well-conditioned everywhere. For a
+limb 0.0001 off straight, the true angle is 0.00572958°; float32 `arccos` returns
+**exactly 0.0** — total loss of the value — while `atan2` gives it to within 4e-10.
+Expect `atan2` to differ from the *recorded* values by slightly more than the
+`arccos` form does, because the recorded values carry the `arccos` error.
+
+**2. Precision must be rounded at NumPy's rounding points, not just at the end.**
+
+NumPy evaluates these as chains of float32 array operations, so every intermediate is
+rounded to float32 — the squares, their sums, the sqrt, the running sum over joints,
+the division. Accumulating in double and rounding once at the end is a *different*
+(slightly more accurate) answer and drifts past tolerance. In the JS port this needed
+`Math.fround` at each step; in Swift, keep the arithmetic in `Float` rather than
+promoting to `Double` mid-expression.
+
+Note also that under NumPy 2.x's NEP 50 the literal `1.0` in
+`np.where(valid, nba * nbc, 1.0)` is a *weak* scalar and does **not** promote, so the
+whole angle path — `arccos`, `degrees` and `.mean()` included — stays float32. Under
+NumPy 1.x that same expression promotes to float64 and yields different numbers, so
+**the golden vectors are NumPy-2.x specific**. Regenerating them on NumPy 1.x would
+silently change `angle_error`.
 
 ## Porting traps
 

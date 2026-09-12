@@ -462,13 +462,16 @@ def main() -> None:
         )
         for key, want in case["metrics"].items():
             actual = got[key]
+            # angle_error rides on an ill-conditioned arccos, so it gets its own
+            # bound; see COMPARISON_TOLERANCES in export_golden_vectors.py.
+            atol = tol.get(f"{key}_atol", tol["score_atol"])
             if isinstance(want, bool) or isinstance(actual, (bool, np.bool_)):
                 if bool(want) != bool(actual):
                     report.fail(f"{label} {key}: {actual} vs {want}")
             elif want is None:
                 if np.isfinite(float(actual)):
                     report.fail(f"{label} {key}: expected NaN, got {actual}")
-            elif not close_enough(actual, want, tol["score_atol"]):
+            elif not close_enough(actual, want, atol):
                 report.fail(f"{label} {key}: {actual} vs {want}")
     report.ok(f"4_compare:    {len(levels['4_compare'])} metric bundles reproduced")
 
