@@ -347,9 +347,42 @@ Use the karate labels for zero-shot classification instead of the kickboxing set
 python action_recognition.py --source 0 --target-technique gyaku_zuki --label-set karate
 ```
 
-## 14) Useful output locations
+## 14) Export the reference library and golden vectors for a port
+
+For reimplementing the scoring core where PyTorch cannot run (iOS, browser).
+Run all three; the last one is the check that the exports are still valid.
+
+```powershell
+python scripts/export_mobile_bundle.py
+```
+
+```powershell
+python scripts/export_golden_vectors.py
+```
+
+```powershell
+python scripts/verify_export.py
+```
+
+Inspect the reference data by hand instead of shipping it:
+
+```powershell
+python scripts/export_mobile_bundle.py --format json
+```
+
+Narrow the golden vectors to one technique while iterating on a port:
+
+```powershell
+python scripts/export_golden_vectors.py --technique jab --max-fixtures 8
+```
+
+See `docs/PORTING.md` for what the artifacts contain and the traps that make a
+faithful-looking port score differently.
+
+## 15) Useful output locations
 
 - Main trainer output video: `output_demo.mp4`
 - Pose-only video (if enabled): `datasets/pose_video.mp4`
 - Preview videos: `reference_poses/previews/`
 - Structured run artifacts: `data/runs/`
+- Port export artifacts: `export/mobile/`

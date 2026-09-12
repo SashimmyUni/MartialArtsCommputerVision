@@ -19,10 +19,6 @@ InputVideo/
 # Profiling / timing output
 timing.json
 
-# Prefetched source videos and cached pose-detection tables. Large, derived,
-# and re-creatable from the plan CSV; only the extracted reference_poses/*.npy
-# are committed.
-cache/
-
-# Local scouting catalog
-reference_poses/candidate_catalog.sqlite
+# Generated port artifacts (regenerate with scripts/export_mobile_bundle.py
+# and scripts/export_golden_vectors.py; see docs/PORTING.md)
+export/

@@ -120,3 +120,38 @@ with scores unchanged to float rounding.
 `docs/HOWTO.md` §9.5 documents the opt-in speed flags (`--imgsz`,
 `--detect-stride`, `--score-every`, `--score-topk`, `--ref-canonical-len`); all
 default to prior behaviour.
+
+## Porting the scoring core
+
+The scoring core is pure NumPy and the reference library is plain keypoint data,
+so both can be reimplemented on a platform that cannot run PyTorch — an iOS app
+or a browser. Three scripts export what such a port needs and check the result:
+
+```bash
+python scripts/export_mobile_bundle.py
+```
+
+```bash
+python scripts/export_golden_vectors.py
+```
+
+```bash
+python scripts/verify_export.py
+```
+
+The first flattens the 93 reference sequences into a self-describing manifest
+plus a float32 blob. The second records the expected output of every layer of the
+scoring core, so a reimplementation can be checked against the numbers this repo
+actually produces. The third reads back **only** those exports, re-runs the
+scoring core on them, validates the blob's integrity and cross-checks the
+manifest's constants against the live code. All land in `export/mobile/`
+(gitignored — regenerate rather than commit).
+
+Note what the third one does *not* establish: it imports the same functions that
+generated the vectors, so passing means "bug-compatible with current HEAD", not
+"the scoring core is correct". That is what a port needs, and it is not the same
+thing.
+
+See [`docs/PORTING.md`](docs/PORTING.md) for what does and does not travel, the
+licensing constraint, and the traps that make a faithful-looking port score
+differently.
