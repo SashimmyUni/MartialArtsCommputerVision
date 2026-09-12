@@ -93,6 +93,9 @@ python scripts/visualize_reference_pose.py --all --reference-dir reference_poses
 
 ## 9) Batch collection from CSV plan
 
+Runs three stages: prefetch sources, extract pose detections once per distinct
+video, then select windows from the cache.
+
 ```powershell
 python scripts/run_reference_collection_batch.py
 ```
@@ -108,6 +111,64 @@ Run a different plan (see section 13 for the karate one):
 ```powershell
 python scripts/run_reference_collection_batch.py --plan-csv reference_poses/karate_capture_plan.csv
 ```
+
+Download everything first (retryable on its own, so a dropped connection does
+not kill a capture run):
+
+```powershell
+python scripts/run_reference_collection_batch.py --prefetch-only
+```
+
+## 9a) Run the collection stages separately
+
+```powershell
+python scripts/prefetch_sources.py --dry-run
+python scripts/prefetch_sources.py
+
+python scripts/extract_tracks.py --from-plan --dry-run
+python scripts/extract_tracks.py --from-plan
+
+python scripts/select_reference_windows.py --dry-run
+python scripts/select_reference_windows.py
+```
+
+## 9b) Re-tune a capture gate without re-downloading anything
+
+Only window selection depends on the gates, so this reads the cached detections
+and needs no GPU, video or network:
+
+```powershell
+python scripts/select_reference_windows.py --ref-min-return-closure 0.30 --overwrite
+python scripts/select_reference_windows.py --ref-min-motion-energy 0.05 --dry-run
+```
+
+Useful flags: `--technique jab`, `--examples-per-angle 4`,
+`--max-windows-per-video 2` (more windows per video, less source diversity),
+`--score-topk 5` (faster, approximate ranking).
+
+## 9d) Screen scout candidates by pose, not by view count
+
+The scout ranks candidates by views and `filter_candidates.py` by title
+keywords; neither looks at the video. This scores each candidate's best window
+against the technique's reference bank, using the same matcher the trainer
+scores with. Candidates must be extracted first (cached, so a candidate that
+survives is not extracted again).
+
+```powershell
+python scripts/extract_tracks.py --videos URL1 URL2 --max-frames 600
+python scripts/rank_candidates_by_pose.py --technique jab --videos URL1 URL2
+python scripts/rank_candidates_by_pose.py --technique jab `
+  --candidates-csv reference_poses/scout_candidates_golden_seeds.csv `
+  --out-csv reference_poses/jab_candidates_ranked.csv
+```
+
+Point `--reference-dir` at a Golden Seeds bank to rank candidates by how much
+they resemble your own recordings rather than the current bank.
+
+## 9c) Original one-subprocess-per-example flow
+
+```powershell
+python scripts/run_reference_collection_batch.py --legacy```
 
 ## 10) Run all Golden Seeds files for one technique (auto-indexed)
 

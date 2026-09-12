@@ -250,7 +250,9 @@ def main() -> int:
         return 2
 
     tier = None if args.tier == "all" else args.tier
-    entries = techniques(tier=tier)
+    # Read --catalog-csv itself rather than the merged karate+mma default, so
+    # this can target either catalogue standalone (e.g. mma_techniques.csv).
+    entries = techniques(tier=tier, path=catalog_path)
     if not entries:
         print(f"error: no techniques with tier={args.tier} in {catalog_path}")
         return 2

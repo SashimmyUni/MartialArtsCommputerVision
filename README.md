@@ -59,6 +59,44 @@ See [`docs/ReadyToRunCommands.md`](docs/ReadyToRunCommands.md) for the full
 command cookbook and [`docs/HOWTO.md`](docs/HOWTO.md) for the architecture and
 handover guide.
 
+## Building the reference library
+
+Collection runs in three stages, so the expensive work happens once per video
+rather than once per saved example:
+
+```bash
+python scripts/run_reference_collection_batch.py
+```
+
+That prefetches every source the plan names into `cache/videos/`, extracts pose
+detections once per distinct video into `cache/tracks/`, then selects reference
+windows from the cache. The 52 ready plan rows name 208 example slots but only
+**119 distinct videos**, 60 of which appear in more than one row — previously
+each slot re-streamed and re-inferred its video in its own subprocess.
+
+The stages can be run on their own:
+
+```bash
+python scripts/prefetch_sources.py           # download sources, retryable on its own
+python scripts/extract_tracks.py --from-plan # pose detections, once per video (GPU)
+python scripts/select_reference_windows.py   # windows from the cache (no GPU/video/network)
+```
+
+Because only the last stage depends on the capture gates, **re-tuning a gate
+does not re-download or re-infer anything**:
+
+```bash
+python scripts/select_reference_windows.py --ref-min-return-closure 0.30 --overwrite
+```
+
+That is CPU-only numpy over the cached detections — minutes for a technique
+rather than hours of re-downloading and re-inference (`--score-topk` trades some
+exactness for roughly 2.5x on top).
+
+`cache/` is gitignored and can be deleted at any time; it rebuilds from the
+plan. The videos in it are local research artifacts — see `docs/HOWTO.md` §9.4.
+Pass `--legacy` to the batch runner for the original subprocess-per-example flow.
+
 ## Karate techniques
 
 Alongside the kickboxing vocabulary, `reference_poses/karate_techniques.csv`

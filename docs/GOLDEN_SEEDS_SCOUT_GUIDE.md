@@ -183,6 +183,44 @@ python scripts/run_reference_collection_batch.py
 
 These can now be used for real-time recognition with `action_recognition.py`.
 
+## Persistent Candidate Catalog
+
+The scout CSV is an interchange file. For repeatable discovery and review, use
+the SQLite catalog as the source of truth between scouting and capture:
+
+```powershell
+python scripts/candidate_catalog.py import-scout `
+  --csv reference_poses/scout_candidates_golden_seeds.csv
+
+python scripts/candidate_catalog.py list --technique jab --angle front
+```
+
+Approve candidates individually after reviewing their titles, channels, and
+pose previews:
+
+```powershell
+python scripts/candidate_catalog.py review `
+  --technique jab `
+  --angle front `
+  --url "https://www.youtube.com/watch?v=VIDEO_ID" `
+  --status approved `
+  --notes "single person, clean repetition"
+```
+
+Export only groups with at least four approved, distinct sources, then run the
+existing collector with that generated plan:
+
+```powershell
+python scripts/candidate_catalog.py export-plan `
+  --output-csv reference_poses/catalog_capture_plan.csv
+
+python scripts/run_reference_collection_batch.py `
+  --plan-csv reference_poses/catalog_capture_plan.csv
+```
+
+The database is local and gitignored by the `reference_poses/` data policy;
+the CSV remains useful as a portable review or batch artifact.
+
 ## CSV Plan Structure
 
 ### Input Format (Scout Batch Plan)
